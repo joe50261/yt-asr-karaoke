@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Node (not used by the extension itself, kept for safety)
+node_modules/
+
+# Packaged builds
+*.zip
