@@ -126,21 +126,30 @@
     );
   }
 
-  function pickAutoCaptionTrack(tracks) {
+  // The auto-generated (ASR) caption track is a property of the video itself,
+  // derived from the video's speech. Select it purely from the video's caption
+  // tracklist — never from the user's current caption/UI/display settings.
+  function pickAutoCaptionTrack(tracks, tracklist) {
     if (!tracks?.length) return null;
-    const player = document.querySelector('#movie_player');
-    const active = player?.getOption?.('captions', 'track');
-    if (active?.languageCode) {
-      const sameLang = tracks.filter((t) => t.languageCode === active.languageCode);
-      if (sameLang.length) {
-        const asr = sameLang.find((t) => t.kind === 'asr');
-        const byKind = active.kind && sameLang.find((t) => t.kind === active.kind);
-        return asr || byKind || sameLang[0];
-      }
+    const asrTracks = tracks.filter((t) => t.kind === 'asr');
+    if (asrTracks.length === 1) return asrTracks[0];
+    if (asrTracks.length > 1) {
+      // Multiple ASR tracks (rare): disambiguate with video-intrinsic data only,
+      // preferring the track tied to the video's default audio language.
+      const audioTracks = tracklist?.audioTracks;
+      const defAudioIdx = tracklist?.defaultAudioTrackIndex;
+      const defAudio = Number.isInteger(defAudioIdx) ? audioTracks?.[defAudioIdx] : undefined;
+      const audioCapIdx = defAudio?.captionTrackIndices?.[0];
+      const byAudio = Number.isInteger(audioCapIdx) ? tracks[audioCapIdx] : undefined;
+      const defCapIdx = tracklist?.defaultCaptionTrackIndex;
+      const byDefaultCap = Number.isInteger(defCapIdx) ? tracks[defCapIdx] : undefined;
+      const preferredLang = byAudio?.languageCode || byDefaultCap?.languageCode;
+      const byLang = preferredLang && asrTracks.find((t) => t.languageCode === preferredLang);
+      return byLang || asrTracks[0];
     }
+    // No ASR track at all: fall back to a name match (still video data), then first.
     return (
-      tracks.find((t) => t.kind === 'asr') ||
-      tracks.find((t) => /auto|自動|生成/i.test(t.name?.simpleText || '')) ||
+      tracks.find((t) => /auto|自動|自动|生成|auto-generated/i.test(t.name?.simpleText || '')) ||
       tracks[0]
     );
   }
@@ -559,10 +568,11 @@
     state.stage = 'player-response';
     const pr = await waitForPlayerResponse();
     if (!state.active) return;
-    const tracks = pr?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    const tracklist = pr?.captions?.playerCaptionsTracklistRenderer;
+    const tracks = tracklist?.captionTracks;
 
     state.stage = 'pick-track';
-    const track = pickAutoCaptionTrack(tracks);
+    const track = pickAutoCaptionTrack(tracks, tracklist);
     if (!track) {
       throw new Error(`No caption tracks available (tracks=${tracks?.length || 0})`);
     }
