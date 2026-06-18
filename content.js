@@ -126,6 +126,14 @@
     );
   }
 
+  // True while YouTube is playing an ad: the player gains the `ad-showing`
+  // class and the active <video> element is the ad, not the watch video.
+  function isAdShowing() {
+    const player =
+      document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
+    return !!player && player.classList.contains('ad-showing');
+  }
+
   // The auto-generated (ASR) caption track is a property of the video itself,
   // derived from the video's speech. Select it purely from the video's caption
   // tracklist — never from the user's current caption/UI/display settings.
@@ -502,12 +510,32 @@
     });
   }
 
+  // While an ad is showing, hide the overlay and drop any rendered line so no
+  // stale (or ad-derived) caption lingers. Keeps the rAF loop alive so normal
+  // rendering resumes automatically once the ad ends.
+  function hideOverlayForAd() {
+    const root = document.getElementById(ROOT_ID);
+    if (root) {
+      root.dataset.hidden = 'true';
+      root.innerHTML = '';
+    }
+    state.lineKey = '';
+    state.wordEls = [];
+  }
+
   function tick() {
     if (!state.active) return;
     const v = state.video || getVideo();
-    if (!v) return;
+    if (!v) {
+      state.raf = requestAnimationFrame(tick);
+      return;
+    }
     state.video = v;
-    render(v.currentTime * 1000);
+    if (isAdShowing()) {
+      hideOverlayForAd();
+    } else {
+      render(v.currentTime * 1000);
+    }
     state.raf = requestAnimationFrame(tick);
   }
 
