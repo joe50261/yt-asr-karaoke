@@ -32,21 +32,19 @@
   const TRANSCRIPT_BTN_ID = 'yt-karaoke-transcript-btn';
   const ENABLED_KEY = 'yt-karaoke-enabled';
   const TRANSCRIPT_OPEN_KEY = 'yt-karaoke-transcript-open';
-  const DEFAULT_MAX_LINE_WORDS = 10;
+  const TRANSCRIPT_WIDTH_KEY = 'yt-karaoke-transcript-width';
+  // Lines break only where the caption DATA breaks (its own \n line structure);
+  // long lines wrap via CSS — there is NO word-count cap. This gap is a fallback
+  // used ONLY for captions that carry no \n line structure at all.
+  const LINE_BREAK_GAP_MS = 700;
 
   // Live settings from the popup, relayed by bridge.js (chrome.storage -> postMessage)
-  // because this MAIN-world script cannot read chrome.storage. Defaults apply until
-  // the bridge responds; syncBinding()'s signature includes these so a change
-  // (dual-track toggle, line length) re-binds automatically. Line length is counted
-  // in WORDS (caption segments / highlight units), not characters, so a line holds a
-  // consistent number of words across languages (CJK chars are far denser per char).
-  const settings = { dualTrack: false, maxLineWords: DEFAULT_MAX_LINE_WORDS };
+  // because this MAIN-world script cannot read chrome.storage.
+  const settings = { dualTrack: false };
   window.addEventListener('message', (e) => {
     if (e.source !== window || e.data?.__ykSettings !== true) return;
     const s = e.data.settings || {};
     settings.dualTrack = !!s.dualTrack;
-    const n = Math.round(Number(s.maxLineWords));
-    settings.maxLineWords = Number.isFinite(n) ? Math.min(40, Math.max(3, n)) : DEFAULT_MAX_LINE_WORDS;
   });
   // Nudge the bridge to push now, in case it initialized before this script ran.
   window.postMessage({ __ykSettingsRequest: true }, '*');
@@ -127,7 +125,7 @@
   function freshState() {
     return {
       bind: [], // [{ key, words, lines }] — 1 variant, or 2 when dual-track is on
-      bindSig: null, // signature of (variants + maxLineWords) currently parsed in
+      bindSig: null, // signature of the variant(s) currently parsed in
       rendered: [], // [{ lineEl, lineKey, wordEls }] aligned to bind, one row each
       video: null,
       raf: 0,
@@ -311,6 +309,10 @@
 
   function groupLines(words) {
     if (!words.length) return [];
+    // If the captions carry their own \n line structure (almost always), break ONLY
+    // there. Long lines wrap via CSS — no word-count cap (it chopped dense CJK lines
+    // mid-phrase). The gap fallback is used only when there is no \n structure at all.
+    const hasDataBreaks = words.some((w) => w.breakAfter);
     const lines = [];
     let current = { words: [], start: words[0].start, end: words[0].end };
 
@@ -325,18 +327,17 @@
       const w = words[i];
       const prev = current.words[current.words.length - 1];
       // Break where the caption DATA breaks — its own \n line structure (set on the
-      // previous word during parse). This is the source's semantic line, so breaks
-      // land where the captions intend instead of at arbitrary word counts.
+      // previous word during parse): the source's semantic lines.
       const dataBreak = !!prev?.breakAfter;
       // YouTube/CEA captions use ">>" to mark a change of speaker (">>>" for a
       // change of topic). Force a new line at it so speakers don't run together.
       const speakerBreak = /^\s*>>/.test(w.text);
-      // Safety cap only: split a line that would exceed maxLineWords (words =
-      // caption segments / highlight units). Data lines are usually well under it,
-      // so it rarely fires; lowering it lets the user force shorter lines.
-      const wordCount = current.words.length + 1;
+      // Fallback for captions with NO \n structure: break on a speech pause so the
+      // whole video isn't one line. Never used when \n breaks exist (it would chop
+      // a semantic line mid-phrase).
+      const gapBreak = !hasDataBreaks && prev && w.start - prev.end > LINE_BREAK_GAP_MS;
 
-      if (current.words.length && (dataBreak || speakerBreak || wordCount > settings.maxLineWords)) {
+      if (current.words.length && (dataBreak || speakerBreak || gapBreak)) {
         flush();
         current = { words: [], start: w.start, end: w.end };
       }
@@ -512,6 +513,17 @@
       /* In dual-track, translation rows sit indented + muted under the original. */
       #${TRANSCRIPT_ID} .ykt-line[data-variant] { padding-left: 30px; color: #707070; }
       #${TRANSCRIPT_ID} .ykt-line[data-variant][data-active="true"] { color: #0f0f0f; }
+      /* Drag the left edge to resize the panel width. */
+      #${TRANSCRIPT_ID} .ykt-resizer {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 8px;
+        cursor: ew-resize;
+        z-index: 1;
+      }
+      #${TRANSCRIPT_ID} .ykt-resizer:hover { background: rgba(6, 95, 212, 0.3); }
     `;
     document.head.appendChild(style);
   }
@@ -615,8 +627,45 @@
     body.className = 'ykt-body';
     panel.appendChild(head);
     panel.appendChild(body);
+    addTranscriptResizer(panel);
     document.body.appendChild(panel);
+    // Restore the user's chosen width.
+    try {
+      const w = localStorage.getItem(TRANSCRIPT_WIDTH_KEY);
+      if (w) panel.style.width = w;
+    } catch {
+      /* ignore */
+    }
     return panel;
+  }
+
+  // Drag the left edge to resize the panel width (it is anchored to the right).
+  function addTranscriptResizer(panel) {
+    const grip = document.createElement('div');
+    grip.className = 'ykt-resizer';
+    let startX = 0;
+    let startW = 0;
+    const onMove = (e) => {
+      const w = startW + (startX - e.clientX); // drag left => wider
+      panel.style.width = `${Math.min(window.innerWidth * 0.92, Math.max(220, w))}px`;
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      try {
+        localStorage.setItem(TRANSCRIPT_WIDTH_KEY, panel.style.width);
+      } catch {
+        /* ignore */
+      }
+    };
+    grip.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      startX = e.clientX;
+      startW = panel.getBoundingClientRect().width;
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    panel.appendChild(grip);
   }
 
   // (Re)build the panel body from all bound variants. Each variant's lines become
@@ -813,7 +862,7 @@
     const sel = currentAsrSelection();
     if (!sel) return false;
     const wantKeys = settings.dualTrack && sel.tlang ? ['', sel.tlang] : [sel.tlang];
-    const sig = `${wantKeys.join('')}@${settings.maxLineWords}`;
+    const sig = wantKeys.join('|');
     if (sig !== state.bindSig) {
       state.bindSig = sig;
       state.bind = [];

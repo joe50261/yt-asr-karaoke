@@ -45,32 +45,30 @@ A **字幕全文** button (top-right of the player, below the Karaoke button) op
 expandable side panel with the **full caption transcript**. The line currently
 playing is highlighted and auto-scrolled into view, with its active word
 karaoke-highlighted as it's spoken. **Click any line to jump** the video to it.
-The panel shows the selected variant (the translation when one is active), stays
-in sync with playback, hides itself when the extension steps aside, and remembers
-its open/closed state.
+**Drag the panel's left edge to resize its width** (remembered per browser). In
+dual-track mode the transcript is bilingual: original and translation rows are
+interleaved by time (translation rows indented + muted), each highlighting its own
+active line. The panel stays in sync with playback, hides when the extension steps
+aside, and remembers its open/closed state and width.
 
 ## Popup options
 
-Click the toolbar icon for two settings (stored via `chrome.storage`):
+Click the toolbar icon:
 
 - **Bilingual (dual-track)** — when an auto-translation is selected, show the
-  original *and* the translation as two stacked, per-word rows. Each row is timed
-  to its own track and follows that track's line structure, so the two stay
-  roughly in step (they are not forced to identical line boundaries — the
-  languages chunk differently). Needs both bodies loaded: select `自動產生`
-  once, then `自動翻譯` (selecting a translation directly never loads the
-  original — it then shows just the one available).
-- **Words per line** — a safety cap (default 10, range 3–40). Counted in
-  **words** (caption segments / highlight units), not characters, so it behaves
-  consistently across languages.
+  original *and* the translation as two stacked, per-word rows (overlay) and
+  interleaved in the transcript. Each row is timed to its own track and follows
+  that track's line structure, so the two stay roughly in step. Needs both bodies
+  loaded: select `自動產生` once, then `自動翻譯` (selecting a translation
+  directly never loads the original — it then shows just the one available).
 
 ## Line breaks
 
-Lines break where the **caption data itself** breaks (YouTube's json3 includes
-its own `\n` line markers — the source's intended, semantic lines). A speaker
-change (`>>`) also starts a new line. *Words per line* only further-splits a
-line that would exceed the cap; if a video's captions have no line structure,
-it falls back to breaking purely on that cap.
+Lines break where the **caption data itself** breaks (YouTube's json3 includes its
+own `\n` line markers — the source's intended, semantic lines), plus a speaker
+change (`>>`). There is **no word-count cap** — long lines simply wrap via CSS, so
+nothing gets chopped mid-phrase. The only fallback is for captions that carry no
+`\n` structure at all, where lines break on a speech pause instead.
 
 ## What it does NOT do
 
