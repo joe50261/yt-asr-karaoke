@@ -34,6 +34,8 @@ caption, not something we force on). See *Using it* below.
    language, still per word.
 4. The **Karaoke: ON/OFF** button (top-right of the player, visible on hover)
    toggles the overlay. State is remembered per browser (`localStorage`).
+5. **Resize the caption font**: hover the overlay and drag the small grip at its
+   bottom-right corner up/down; double-click the grip to reset. Saved per browser.
 
 If you select a **non-auto** caption (a manual/uploaded subtitle) or turn
 captions off, the extension **steps aside** and lets the player's own caption
@@ -45,7 +47,8 @@ A **字幕全文** button (top-right of the player, below the Karaoke button) op
 expandable side panel with the **full caption transcript**. The line currently
 playing is highlighted and auto-scrolled into view, with its active word
 karaoke-highlighted as it's spoken. **Click any line to jump** the video to it.
-**Drag the panel's left edge to resize its width** (remembered per browser). In
+**Drag the panel's left edge to resize its width**; **double-click that edge to
+fit the width** to the longest line (remembered per browser). In
 dual-track mode the transcript is bilingual: original and translation rows are
 interleaved by time (translation rows indented + muted), each highlighting its own
 active line. The panel stays in sync with playback, hides when the extension steps

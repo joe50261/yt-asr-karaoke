@@ -33,6 +33,7 @@
   const ENABLED_KEY = 'yt-karaoke-enabled';
   const TRANSCRIPT_OPEN_KEY = 'yt-karaoke-transcript-open';
   const TRANSCRIPT_WIDTH_KEY = 'yt-karaoke-transcript-width';
+  const OVERLAY_SCALE_KEY = 'yt-karaoke-overlay-scale';
   // Lines break only where the caption DATA breaks (its own \n line structure);
   // long lines wrap via CSS — there is NO word-count cap. This gap is a fallback
   // used ONLY for captions that carry no \n line structure at all.
@@ -377,16 +378,34 @@
         transform: translateX(-50%);
         z-index: 65;
         max-width: 92%;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 4px;
-        text-align: center;
         pointer-events: none;
         font-family: "YouTube Noto", Roboto, Arial, sans-serif;
         line-height: 1.35;
         transition: opacity 0.15s ease;
       }
+      #${ROOT_ID} .yk-lines {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        text-align: center;
+      }
+      #${ROOT_ID} .yk-resizer {
+        position: absolute;
+        right: -3px;
+        bottom: -3px;
+        width: 18px;
+        height: 18px;
+        cursor: nwse-resize;
+        pointer-events: auto;
+        opacity: 0;
+        background: linear-gradient(135deg, transparent 45%, rgba(255, 229, 102, 0.9) 45%);
+        border-radius: 0 0 6px 0;
+        transition: opacity 0.15s ease;
+      }
+      .html5-video-player:hover #${ROOT_ID} .yk-resizer,
+      #movie_player:hover #${ROOT_ID} .yk-resizer { opacity: 0.7; }
+      #${ROOT_ID} .yk-resizer:hover { opacity: 1; }
       #${ROOT_ID} .yk-line {
         display: inline-block;
         padding: 0.35em 0.65em;
@@ -397,7 +416,7 @@
       }
       #${ROOT_ID} .yk-word {
         display: inline;
-        font-size: clamp(18px, 2.4vw, 28px);
+        font-size: calc(clamp(18px, 2.4vw, 28px) * var(--yk-scale, 1));
         font-weight: 600;
         letter-spacing: 0.02em;
         white-space: pre-wrap;
@@ -541,8 +560,61 @@
     root = document.createElement('div');
     root.id = ROOT_ID;
     root.setAttribute('aria-live', 'polite');
+    // Lines render into .yk-lines so the resize grip (a sibling) survives the
+    // per-bind replaceChildren in render().
+    const linesBox = document.createElement('div');
+    linesBox.className = 'yk-lines';
+    root.appendChild(linesBox);
+    root.style.setProperty('--yk-scale', getOverlayScale());
+    addOverlayResizer(root);
     player.appendChild(root);
     return root;
+  }
+
+  function getOverlayScale() {
+    try {
+      const s = parseFloat(localStorage.getItem(OVERLAY_SCALE_KEY));
+      return Number.isFinite(s) ? Math.min(3, Math.max(0.5, s)) : 1;
+    } catch {
+      return 1;
+    }
+  }
+
+  // Drag the bottom-right grip to scale the karaoke caption font; double-click to
+  // reset. The scale is a --yk-scale CSS variable on the overlay root, persisted.
+  function addOverlayResizer(root) {
+    const grip = document.createElement('div');
+    grip.className = 'yk-resizer';
+    let startY = 0;
+    let startScale = 1;
+    const apply = (scale) => {
+      const s = Math.min(3, Math.max(0.5, scale));
+      root.style.setProperty('--yk-scale', s);
+      try {
+        localStorage.setItem(OVERLAY_SCALE_KEY, String(s));
+      } catch {
+        /* ignore */
+      }
+    };
+    const onMove = (e) => apply(startScale + (e.clientY - startY) / 160); // drag down => bigger
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    grip.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      startY = e.clientY;
+      startScale = getOverlayScale();
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    grip.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      apply(1);
+    });
+    root.appendChild(grip);
   }
 
   function ensureToggle() {
@@ -665,7 +737,31 @@
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     });
+    // Double-click the grip to fit the panel width to its widest line.
+    grip.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      fitTranscriptWidth(panel);
+    });
     panel.appendChild(grip);
+  }
+
+  // Auto-size the panel so its widest line does not wrap (clamped to the viewport).
+  function fitTranscriptWidth(panel) {
+    const body = panel.querySelector('.ykt-body');
+    let max = 0;
+    body.querySelectorAll('.ykt-line').forEach((row) => {
+      row.style.whiteSpace = 'nowrap';
+      max = Math.max(max, row.scrollWidth + (row.offsetWidth - row.clientWidth));
+      row.style.whiteSpace = '';
+    });
+    // + horizontal padding/border of the body and a little slack for the scrollbar.
+    const w = Math.min(window.innerWidth * 0.92, Math.max(220, max + 36));
+    panel.style.width = `${w}px`;
+    try {
+      localStorage.setItem(TRANSCRIPT_WIDTH_KEY, panel.style.width);
+    } catch {
+      /* ignore */
+    }
   }
 
   // (Re)build the panel body from all bound variants. Each variant's lines become
@@ -793,7 +889,7 @@
         lineEl.className = 'yk-line';
         return { lineEl, lineKey: '', wordEls: [] };
       });
-      root.replaceChildren(...state.rendered.map((r) => r.lineEl));
+      root.querySelector('.yk-lines').replaceChildren(...state.rendered.map((r) => r.lineEl));
     }
     let anyVisible = false;
     binds.forEach((b, i) => {
@@ -902,7 +998,7 @@
     const root = document.getElementById(ROOT_ID);
     if (root) {
       root.dataset.hidden = 'true';
-      root.replaceChildren();
+      root.querySelector('.yk-lines')?.replaceChildren(); // keep .yk-lines + resize grip
     }
     state.bind = [];
     state.bindSig = null;
