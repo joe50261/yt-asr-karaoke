@@ -39,6 +39,16 @@ If you select a **non-auto** caption (a manual/uploaded subtitle) or turn
 captions off, the extension **steps aside** and lets the player's own caption
 show — it never overrides another caption or leaves a blank one.
 
+## Side transcript
+
+A **字幕全文** button (top-right of the player, below the Karaoke button) opens an
+expandable side panel with the **full caption transcript**. The line currently
+playing is highlighted and auto-scrolled into view, with its active word
+karaoke-highlighted as it's spoken. **Click any line to jump** the video to it.
+The panel shows the selected variant (the translation when one is active), stays
+in sync with playback, hides itself when the extension steps aside, and remembers
+its open/closed state.
+
 ## Popup options
 
 Click the toolbar icon for two settings (stored via `chrome.storage`):

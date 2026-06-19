@@ -28,7 +28,10 @@
   const STYLE_ID = 'yt-karaoke-style';
   const ROOT_ID = 'yt-karaoke-root';
   const TOGGLE_ID = 'yt-karaoke-toggle';
+  const TRANSCRIPT_ID = 'yt-karaoke-transcript';
+  const TRANSCRIPT_BTN_ID = 'yt-karaoke-transcript-btn';
   const ENABLED_KEY = 'yt-karaoke-enabled';
+  const TRANSCRIPT_OPEN_KEY = 'yt-karaoke-transcript-open';
   const DEFAULT_MAX_LINE_WORDS = 10;
 
   // Live settings from the popup, relayed by bridge.js (chrome.storage -> postMessage)
@@ -133,6 +136,9 @@
       stage: 'idle',
       videoId: '',
       active: false,
+      transcriptSig: null, // which variant's lines are built into the side panel
+      transcriptRows: [], // [{ row, wordEls, line }] for the full-transcript panel
+      transcriptActiveIdx: -1,
     };
   }
 
@@ -428,6 +434,81 @@
       #movie_player:hover #${TOGGLE_ID} { opacity: 0.85; }
       #${TOGGLE_ID}:hover { opacity: 1; }
       #${TOGGLE_ID}[data-on="false"] { color: rgba(255, 255, 255, 0.5); }
+      #${TRANSCRIPT_BTN_ID} {
+        position: absolute;
+        top: 44px;
+        right: 12px;
+        z-index: 66;
+        padding: 4px 10px;
+        border: none;
+        border-radius: 4px;
+        background: rgba(8, 8, 8, 0.72);
+        color: #fff;
+        font: 600 12px/1.4 Roboto, Arial, sans-serif;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.15s ease;
+      }
+      .html5-video-player:hover #${TRANSCRIPT_BTN_ID},
+      #movie_player:hover #${TRANSCRIPT_BTN_ID} { opacity: 0.85; }
+      #${TRANSCRIPT_BTN_ID}:hover { opacity: 1; }
+      #${TRANSCRIPT_ID} {
+        position: fixed;
+        top: 56px;
+        right: 0;
+        bottom: 12px;
+        width: 360px;
+        max-width: 92vw;
+        z-index: 2400;
+        display: flex;
+        flex-direction: column;
+        background: rgba(255, 255, 255, 0.98);
+        color: #0f0f0f;
+        border-radius: 12px 0 0 12px;
+        box-shadow: -4px 0 24px rgba(0, 0, 0, 0.28);
+        font: 14px/1.5 "YouTube Noto", Roboto, Arial, sans-serif;
+        transform: translateX(calc(100% + 4px));
+        transition: transform 0.2s ease;
+      }
+      #${TRANSCRIPT_ID}[data-open="true"] { transform: translateX(0); }
+      #${TRANSCRIPT_ID} .ykt-head {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        border-bottom: 1px solid #e5e5e5;
+        font-weight: 700;
+      }
+      #${TRANSCRIPT_ID} .ykt-close {
+        border: none;
+        background: none;
+        cursor: pointer;
+        font-size: 20px;
+        line-height: 1;
+        color: #606060;
+      }
+      #${TRANSCRIPT_ID} .ykt-body {
+        position: relative;
+        flex: 1 1 auto;
+        overflow-y: auto;
+        padding: 6px 0;
+        overscroll-behavior: contain;
+      }
+      #${TRANSCRIPT_ID} .ykt-line {
+        padding: 6px 14px;
+        cursor: pointer;
+        color: #5a5a5a;
+        border-left: 3px solid transparent;
+      }
+      #${TRANSCRIPT_ID} .ykt-line:hover { background: #f2f2f2; }
+      #${TRANSCRIPT_ID} .ykt-line[data-active="true"] {
+        background: #eef4ff;
+        border-left-color: #065fd4;
+        color: #0f0f0f;
+      }
+      #${TRANSCRIPT_ID} .ykt-w--past { color: #9a9a9a; }
+      #${TRANSCRIPT_ID} .ykt-w--active { color: #b8860b; font-weight: 700; }
     `;
     document.head.appendChild(style);
   }
@@ -472,6 +553,145 @@
       }
     });
     player.appendChild(btn);
+  }
+
+  // ---- Expandable side transcript panel (full caption text, karaoke-highlighted) ----
+  function isTranscriptOpen() {
+    try {
+      return localStorage.getItem(TRANSCRIPT_OPEN_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  function setTranscriptOpen(on) {
+    try {
+      localStorage.setItem(TRANSCRIPT_OPEN_KEY, on ? 'true' : 'false');
+    } catch {
+      /* ignore */
+    }
+    const panel = document.getElementById(TRANSCRIPT_ID);
+    if (panel) panel.dataset.open = String(on);
+  }
+
+  function ensureTranscriptToggle() {
+    if (document.getElementById(TRANSCRIPT_BTN_ID)) return;
+    const player = getPlayerEl();
+    if (!player) return;
+    const btn = document.createElement('button');
+    btn.id = TRANSCRIPT_BTN_ID;
+    btn.type = 'button';
+    btn.textContent = '字幕全文';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      setTranscriptOpen(!isTranscriptOpen());
+    });
+    player.appendChild(btn);
+  }
+
+  function ensureTranscriptPanel() {
+    let panel = document.getElementById(TRANSCRIPT_ID);
+    if (panel) return panel;
+    panel = document.createElement('div');
+    panel.id = TRANSCRIPT_ID;
+    panel.dataset.open = String(isTranscriptOpen());
+    const head = document.createElement('div');
+    head.className = 'ykt-head';
+    const title = document.createElement('span');
+    title.textContent = '字幕全文';
+    const close = document.createElement('button');
+    close.className = 'ykt-close';
+    close.type = 'button';
+    close.textContent = '×';
+    close.setAttribute('aria-label', 'Close transcript');
+    close.addEventListener('click', () => setTranscriptOpen(false));
+    head.appendChild(title);
+    head.appendChild(close);
+    const body = document.createElement('div');
+    body.className = 'ykt-body';
+    panel.appendChild(head);
+    panel.appendChild(body);
+    document.body.appendChild(panel);
+    return panel;
+  }
+
+  // (Re)build the panel body with every line of `lines` as a clickable row.
+  function buildTranscript(lines) {
+    const panel = ensureTranscriptPanel();
+    const body = panel.querySelector('.ykt-body');
+    const rows = lines.map((line) => {
+      const row = document.createElement('div');
+      row.className = 'ykt-line';
+      const wordEls = line.words.map((w) => {
+        const span = document.createElement('span');
+        span.className = 'ykt-w ykt-w--future';
+        span.textContent = w.text;
+        row.appendChild(span);
+        return span;
+      });
+      row.addEventListener('click', () => {
+        const v = state.video || getVideo();
+        if (v) v.currentTime = line.start / 1000 + 0.01;
+      });
+      return { row, wordEls, line };
+    });
+    body.replaceChildren(...rows.map((r) => r.row));
+    return rows;
+  }
+
+  function hideTranscript() {
+    const panel = document.getElementById(TRANSCRIPT_ID);
+    if (panel) panel.dataset.open = 'false';
+    state.transcriptActiveIdx = -1;
+  }
+
+  // Keep the side transcript in sync with playback: highlight the active line and
+  // word, auto-scroll it into view. `entry` is the bound variant to show.
+  function syncTranscript(t, entry) {
+    if (!isTranscriptOpen() || !entry) {
+      hideTranscript();
+      return;
+    }
+    const panel = ensureTranscriptPanel();
+    panel.dataset.open = 'true';
+    const sig = `${entry.key}|${entry.lines.length}`;
+    if (sig !== state.transcriptSig) {
+      state.transcriptSig = sig;
+      state.transcriptRows = buildTranscript(entry.lines);
+      state.transcriptActiveIdx = -1;
+    }
+    const lines = entry.lines;
+    let idx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const next = lines[i + 1];
+      if (t >= lines[i].start - 80 && (!next || t < next.start + 80)) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx !== state.transcriptActiveIdx) {
+      const prev = state.transcriptRows[state.transcriptActiveIdx];
+      if (prev) prev.row.removeAttribute('data-active');
+      state.transcriptActiveIdx = idx;
+      const cur = state.transcriptRows[idx];
+      if (cur) {
+        cur.row.dataset.active = 'true';
+        // Scroll only the panel body (not the page) to center the active line.
+        const body = panel.querySelector('.ykt-body');
+        const top = cur.row.offsetTop - (body.clientHeight - cur.row.offsetHeight) / 2;
+        body.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+      }
+    }
+    const active = state.transcriptRows[idx];
+    if (active) {
+      active.line.words.forEach((w, j) => {
+        const el = active.wordEls[j];
+        if (!el) return;
+        const cls = `ykt-w ykt-w--${wordState(w, t)}`;
+        if (el.className !== cls) el.className = cls;
+      });
+    }
   }
 
   function findActiveLine(lines, t) {
@@ -615,6 +835,7 @@
     state.bind = [];
     state.bindSig = null;
     state.rendered = [];
+    hideTranscript();
   }
 
   function tick() {
@@ -632,7 +853,11 @@
       stepAside();
     } else {
       engage();
-      render(v.currentTime * 1000);
+      const ms = v.currentTime * 1000;
+      render(ms);
+      // The side transcript shows the user's selected variant (the last bind: the
+      // translation in dual-track, or the only one in single-track).
+      syncTranscript(ms, state.bind[state.bind.length - 1]);
     }
     state.raf = requestAnimationFrame(tick);
   }
@@ -676,6 +901,7 @@
     state.active = false;
     cancelAnimationFrame(state.raf);
     getPlayerEl()?.classList.remove('yk-engaged'); // restore the native caption
+    hideTranscript();
     const root = document.getElementById(ROOT_ID);
     if (root) root.remove();
     const toggle = document.getElementById(TOGGLE_ID);
@@ -690,6 +916,7 @@
     state.stage = 'styles';
     injectStyles();
     ensureToggle();
+    ensureTranscriptToggle();
     state.videoId = currentVideoId();
 
     state.stage = 'player-response';
