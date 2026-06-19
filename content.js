@@ -136,9 +136,9 @@
       stage: 'idle',
       videoId: '',
       active: false,
-      transcriptSig: null, // which variant's lines are built into the side panel
-      transcriptRows: [], // [{ row, wordEls, line }] for the full-transcript panel
-      transcriptActiveIdx: -1,
+      transcriptSig: null, // which variant(s) are built into the side panel
+      transcriptByVariant: {}, // key -> [{ row, wordEls, line }] per line of that variant
+      transcriptActive: [], // currently-highlighted row entries (1, or 2 in dual-track)
     };
   }
 
@@ -509,6 +509,9 @@
       }
       #${TRANSCRIPT_ID} .ykt-w--past { color: #9a9a9a; }
       #${TRANSCRIPT_ID} .ykt-w--active { color: #b8860b; font-weight: 700; }
+      /* In dual-track, translation rows sit indented + muted under the original. */
+      #${TRANSCRIPT_ID} .ykt-line[data-variant] { padding-left: 30px; color: #707070; }
+      #${TRANSCRIPT_ID} .ykt-line[data-variant][data-active="true"] { color: #0f0f0f; }
     `;
     document.head.appendChild(style);
   }
@@ -616,82 +619,102 @@
     return panel;
   }
 
-  // (Re)build the panel body with every line of `lines` as a clickable row.
-  function buildTranscript(lines) {
+  // (Re)build the panel body from all bound variants. Each variant's lines become
+  // clickable rows; rows from both languages are interleaved by time (so the
+  // translation sits next to its original in dual-track). Returns a per-variant
+  // array of row entries aligned to that variant's lines.
+  function buildTranscript(entries) {
     const panel = ensureTranscriptPanel();
     const body = panel.querySelector('.ykt-body');
-    const rows = lines.map((line) => {
-      const row = document.createElement('div');
-      row.className = 'ykt-line';
-      const wordEls = line.words.map((w) => {
-        const span = document.createElement('span');
-        span.className = 'ykt-w ykt-w--future';
-        span.textContent = w.text;
-        row.appendChild(span);
-        return span;
+    const ordered = []; // { row, start } for time-interleaved DOM order
+    const byVariant = {};
+    entries.forEach((e) => {
+      byVariant[e.key] = e.lines.map((line) => {
+        const row = document.createElement('div');
+        row.className = 'ykt-line';
+        if (e.key) row.dataset.variant = e.key; // translation rows (indented/muted)
+        const wordEls = line.words.map((w) => {
+          const span = document.createElement('span');
+          span.className = 'ykt-w ykt-w--future';
+          span.textContent = w.text;
+          row.appendChild(span);
+          return span;
+        });
+        row.addEventListener('click', () => {
+          const v = state.video || getVideo();
+          if (v) v.currentTime = line.start / 1000 + 0.01;
+        });
+        ordered.push({ row, start: line.start });
+        return { row, wordEls, line };
       });
-      row.addEventListener('click', () => {
-        const v = state.video || getVideo();
-        if (v) v.currentTime = line.start / 1000 + 0.01;
-      });
-      return { row, wordEls, line };
     });
-    body.replaceChildren(...rows.map((r) => r.row));
-    return rows;
+    ordered.sort((a, b) => a.start - b.start);
+    body.replaceChildren(...ordered.map((x) => x.row));
+    return byVariant;
   }
 
   function hideTranscript() {
     const panel = document.getElementById(TRANSCRIPT_ID);
     if (panel) panel.dataset.open = 'false';
-    state.transcriptActiveIdx = -1;
+    state.transcriptActive = [];
   }
 
-  // Keep the side transcript in sync with playback: highlight the active line and
-  // word, auto-scroll it into view. `entry` is the bound variant to show.
-  function syncTranscript(t, entry) {
-    if (!isTranscriptOpen() || !entry) {
+  // Keep the side transcript in sync with playback. `entries` is state.bind (1
+  // variant, or 2 in dual-track). Each variant highlights its own active line +
+  // word; the selected (last) variant's active line is what we auto-scroll to.
+  function syncTranscript(t, entries) {
+    if (!isTranscriptOpen() || !entries || !entries.length) {
       hideTranscript();
       return;
     }
     const panel = ensureTranscriptPanel();
     panel.dataset.open = 'true';
-    const sig = `${entry.key}|${entry.lines.length}`;
+    const sig = entries.map((e) => `${e.key}:${e.lines.length}`).join('|');
     if (sig !== state.transcriptSig) {
       state.transcriptSig = sig;
-      state.transcriptRows = buildTranscript(entry.lines);
-      state.transcriptActiveIdx = -1;
+      state.transcriptByVariant = buildTranscript(entries);
+      state.transcriptActive = [];
     }
-    const lines = entry.lines;
-    let idx = -1;
-    for (let i = 0; i < lines.length; i++) {
-      const next = lines[i + 1];
-      if (t >= lines[i].start - 80 && (!next || t < next.start + 80)) {
-        idx = i;
-        break;
+    const nowActive = [];
+    let scrollRow = null;
+    entries.forEach((e, ei) => {
+      const rows = state.transcriptByVariant[e.key] || [];
+      let idx = -1;
+      for (let i = 0; i < e.lines.length; i++) {
+        const next = e.lines[i + 1];
+        if (t >= e.lines[i].start - 80 && (!next || t < next.start + 80)) {
+          idx = i;
+          break;
+        }
       }
-    }
-    if (idx !== state.transcriptActiveIdx) {
-      const prev = state.transcriptRows[state.transcriptActiveIdx];
-      if (prev) prev.row.removeAttribute('data-active');
-      state.transcriptActiveIdx = idx;
-      const cur = state.transcriptRows[idx];
-      if (cur) {
-        cur.row.dataset.active = 'true';
-        // Scroll only the panel body (not the page) to center the active line.
+      const entry = idx >= 0 ? rows[idx] : null;
+      if (entry) {
+        nowActive.push(entry);
+        if (ei === entries.length - 1) scrollRow = entry.row;
+      }
+    });
+    const prev = state.transcriptActive || [];
+    const changed = nowActive.length !== prev.length || nowActive.some((e, i) => e !== prev[i]);
+    if (changed) {
+      prev.forEach((e) => e.row.removeAttribute('data-active'));
+      nowActive.forEach((e) => {
+        e.row.dataset.active = 'true';
+      });
+      state.transcriptActive = nowActive;
+      if (scrollRow) {
         const body = panel.querySelector('.ykt-body');
-        const top = cur.row.offsetTop - (body.clientHeight - cur.row.offsetHeight) / 2;
+        const top = scrollRow.offsetTop - (body.clientHeight - scrollRow.offsetHeight) / 2;
         body.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
       }
     }
-    const active = state.transcriptRows[idx];
-    if (active) {
-      active.line.words.forEach((w, j) => {
-        const el = active.wordEls[j];
+    nowActive.forEach((e) => {
+      e.line.words.forEach((w, j) => {
+        const el = e.wordEls[j];
         if (!el) return;
         const cls = `ykt-w ykt-w--${wordState(w, t)}`;
         if (el.className !== cls) el.className = cls;
       });
-    }
+    });
   }
 
   function findActiveLine(lines, t) {
@@ -855,9 +878,9 @@
       engage();
       const ms = v.currentTime * 1000;
       render(ms);
-      // The side transcript shows the user's selected variant (the last bind: the
-      // translation in dual-track, or the only one in single-track).
-      syncTranscript(ms, state.bind[state.bind.length - 1]);
+      // The side transcript follows the binding: single variant normally, or both
+      // (original + translation, interleaved by time) when dual-track is on.
+      syncTranscript(ms, state.bind);
     }
     state.raf = requestAnimationFrame(tick);
   }
