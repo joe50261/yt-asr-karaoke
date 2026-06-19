@@ -856,7 +856,17 @@
     const prev = state.transcriptActive || [];
     const changed = nowActive.length !== prev.length || nowActive.some((e, i) => e !== prev[i]);
     if (changed) {
-      prev.forEach((e) => e.row.removeAttribute('data-active'));
+      // Rows LEAVING the active set: drop the row highlight AND reset their word
+      // spans back to plain. The per-word loop below only ever touches currently
+      // active rows, so without this the last word that was lit stays gold on the
+      // line we just left (the "residual highlight").
+      prev.forEach((e) => {
+        if (nowActive.includes(e)) return;
+        e.row.removeAttribute('data-active');
+        e.wordEls.forEach((el) => {
+          if (el.className !== 'ykt-w ykt-w--future') el.className = 'ykt-w ykt-w--future';
+        });
+      });
       nowActive.forEach((e) => {
         e.row.dataset.active = 'true';
       });
