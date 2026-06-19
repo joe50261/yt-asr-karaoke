@@ -1,63 +1,106 @@
 # YouTube Caption Karaoke (Chrome Extension, Manifest V3)
 
-Turns a YouTube video's auto-generated captions into a full-line **karaoke
-overlay**: the active line is shown centered over the player and each word is
-highlighted in sync with the audio using the caption track's **real per-word
-timing**.
+Turns a YouTube video's **auto-generated captions** into a karaoke overlay: the
+active line is shown centered over the player and each word lights up in sync
+with the audio using the caption track's **real per-word timing** (never
+simulated). Also supports YouTube's **auto-translated** auto-captions, including
+a **bilingual dual-track** view.
 
-## What it does
+## How it works (the short version)
 
-- Runs only on `https://www.youtube.com/*` `/watch` pages.
-- Installs network-capture hooks at `document_start` (before the player loads),
-  so the player's first `timedtext` `json3` request is captured automatically —
-  you do **not** need to manually turn captions on.
-- Picks the auto-speech-recognition (`asr`) caption track from the player
-  response, parses the captured json3, and renders a karaoke overlay
-  (`.yk-word--active` / `--past` / `--future`).
-- Re-initializes automatically on YouTube SPA navigation (next video,
-  search → video, etc.).
-- A small **Karaoke: ON/OFF** button appears in the top-right of the player
-  (visible on hover). The state is persisted in `localStorage`.
+The extension is a **passive binding** to whatever auto-caption the player is
+currently displaying — it never fetches captions and never drives the player:
+
+- **player** — YouTube's player is the only thing that can *fetch* a caption
+  track; its requests carry a `pot` (proof-of-origin) token. A direct fetch of
+  the caption URL is `pot`-gated and returns an empty body, so we never do it.
+- **hook** — a `document_start` hook passively *captures* the body of the
+  player's own `timedtext` request for the auto-caption (`kind=asr`, plus
+  `tlang=…` for a translation). It only captures; it never fetches.
+- **us** — we read the player's currently selected track, find the matching
+  captured body, parse its json3, and render the karaoke overlay.
+
+Because of this, **you select the auto-caption yourself** (it's the player's own
+caption, not something we force on). See *Using it* below.
+
+## Using it
+
+1. Open a `https://www.youtube.com/watch?...` video.
+2. In the player's caption menu (gear → Subtitles), choose the
+   **auto-generated** track (e.g. `English (auto-generated)` / `英文 (自動產生)`).
+   The karaoke overlay binds to it and highlights per word.
+3. For a translation, pick **Auto-translate** → a language
+   (e.g. `English (auto-generated) >> 中文`). The overlay switches to that
+   language, still per word.
+4. The **Karaoke: ON/OFF** button (top-right of the player, visible on hover)
+   toggles the overlay. State is remembered per browser (`localStorage`).
+
+If you select a **non-auto** caption (a manual/uploaded subtitle) or turn
+captions off, the extension **steps aside** and lets the player's own caption
+show — it never overrides another caption or leaves a blank one.
+
+## Popup options
+
+Click the toolbar icon for two settings (stored via `chrome.storage`):
+
+- **Bilingual (dual-track)** — when an auto-translation is selected, show the
+  original *and* the translation as two stacked, per-word rows. Each row is timed
+  to its own track and follows that track's line structure, so the two stay
+  roughly in step (they are not forced to identical line boundaries — the
+  languages chunk differently). Needs both bodies loaded: select `自動產生`
+  once, then `自動翻譯` (selecting a translation directly never loads the
+  original — it then shows just the one available).
+- **Words per line** — a safety cap (default 10, range 3–40). Counted in
+  **words** (caption segments / highlight units), not characters, so it behaves
+  consistently across languages.
+
+## Line breaks
+
+Lines break where the **caption data itself** breaks (YouTube's json3 includes
+its own `\n` line markers — the source's intended, semantic lines). A speaker
+change (`>>`) also starts a new line. *Words per line* only further-splits a
+line that would exceed the cap; if a video's captions have no line structure,
+it falls back to breaking purely on that cap.
 
 ## What it does NOT do
 
-- It does **not** mute the video or change audio.
-- It does **not** disable autoplay-next or otherwise interfere with playback.
-- It does **not** simulate or interpolate word timing. Highlighting is driven
-  only by the caption data's real `tOffsetMs` values.
-
-## Word-level timing caveat
-
-Most YouTube auto-captions (ASR) include per-word offsets, so words light up one
-by one. However, **some videos' auto-captions are line-level only** (no per-word
-offsets). For those, every word in a line shares the same start time, so the
-overlay highlights **per line** instead of per word. This is expected: we never
-fabricate timing that the caption track does not provide.
-
-If a video has no caption track at all (no auto-captions available), the overlay
-will not appear.
+- Does **not** fetch captions (it can't — `timedtext` is `pot`-gated) and does
+  **not** drive/auto-switch the player's caption selection.
+- Does **not** mute the video, change audio, or affect autoplay-next.
+- Does **not** simulate or interpolate word timing — highlighting uses only the
+  caption data's real `tOffsetMs`. Some videos' auto-captions are line-level only
+  (no per-word offsets); those highlight per line.
+- Does **not** override another caption: it only hides the native caption while
+  it is actively showing the asr karaoke.
 
 ## Load unpacked (development)
 
-1. Open `chrome://extensions` in Chrome (or any Chromium browser).
-2. Enable **Developer mode** (top-right toggle).
-3. Click **Load unpacked**.
-4. Select this `extension/` folder.
-5. Open any `https://www.youtube.com/watch?...` video that has auto-captions.
+1. Open `chrome://extensions`.
+2. Enable **Developer mode** (top-right).
+3. Click **Load unpacked** and select this `extension/` folder.
+4. Open a `youtube.com/watch` video and select its auto-generated caption.
+
+After editing files, click the extension's **reload** (↻) on `chrome://extensions`
+and reload the YouTube tab.
 
 ## Files
 
-- `manifest.json` — MV3 manifest. The content script runs in the `MAIN` world at
-  `document_start` and requires no special permissions.
-- `content.js` — the karaoke logic (network capture, track pick, json3 parse,
-  line grouping, overlay render, SPA re-init, on/off toggle).
-- `popup.html` — informational action popup.
+- `manifest.json` — MV3 manifest. `content.js` runs in the `MAIN` world at
+  `document_start`; `bridge.js` runs in the default (isolated) world. Requests
+  the `storage` permission (for popup settings); no host permissions.
+- `content.js` — the karaoke logic: passive hook/capture, current-track
+  detection, json3 parse + line grouping, overlay render (single or dual-track),
+  SPA re-init, on/off toggle. **No `innerHTML`** — YouTube enforces Trusted
+  Types, so DOM is built with `textContent`/`replaceChildren`.
+- `bridge.js` — isolated-world relay: mirrors `chrome.storage` settings to the
+  MAIN-world `content.js` via `window.postMessage` (it has `chrome.*`; the MAIN
+  world does not).
+- `popup.html` / `popup.js` — the settings popup.
 - `icons/` — 16/48/128 px icons.
 
 ## Notes
 
-- No host permissions are requested; the content script only touches the page it
-  is injected into (matched to `www.youtube.com`).
-- The logic is adapted from the project's validated `karaoke.js`. The shipped
-  version removes dev-only behaviors (mute, autoplay changes, forced CC toggling)
-  and adds early hook installation + SPA lifecycle handling.
+- No host permissions are requested; the content script only touches the
+  `www.youtube.com` page it is injected into.
+- Adapted from the project's `karaoke.js`, with early hook installation, SPA
+  lifecycle handling, translation/dual-track binding, and the settings popup.

@@ -30,7 +30,6 @@
   const TOGGLE_ID = 'yt-karaoke-toggle';
   const ENABLED_KEY = 'yt-karaoke-enabled';
   const DEFAULT_MAX_LINE_WORDS = 10;
-  const LINE_BREAK_GAP_MS = 700;
 
   // Live settings from the popup, relayed by bridge.js (chrome.storage -> postMessage)
   // because this MAIN-world script cannot read chrome.storage. Defaults apply until
@@ -265,10 +264,17 @@
       const blockEnd = base + (ev.dDurationMs || 0);
       for (const seg of ev.segs) {
         const text = seg.utf8;
-        if (!text || text === '\n') continue;
+        if (!text) continue;
+        if (text === '\n') {
+          // The caption data's OWN line break (a standalone \n segment). Mark the
+          // last word as a line end so groupLines breaks where the source intends
+          // (semantic), instead of us re-chunking arbitrarily.
+          if (words.length) words[words.length - 1].breakAfter = true;
+          continue;
+        }
         // Real per-word offset only — never interpolated.
         const start = base + (seg.tOffsetMs || 0);
-        words.push({ text, start, end: blockEnd });
+        words.push({ text, start, end: blockEnd, breakAfter: false });
       }
     }
     words.sort((a, b) => a.start - b.start);
@@ -312,17 +318,19 @@
     for (let i = 0; i < words.length; i++) {
       const w = words[i];
       const prev = current.words[current.words.length - 1];
-      const gap = prev ? w.start - prev.end : 0;
-      // Word-level length: count caption segments (highlight units), not characters,
-      // so a line holds a consistent number of words across languages.
-      const wordCount = current.words.length + 1;
-      const hardBreak = /\n$/.test(prev?.text || '') || /^\n/.test(w.text);
+      // Break where the caption DATA breaks — its own \n line structure (set on the
+      // previous word during parse). This is the source's semantic line, so breaks
+      // land where the captions intend instead of at arbitrary word counts.
+      const dataBreak = !!prev?.breakAfter;
       // YouTube/CEA captions use ">>" to mark a change of speaker (">>>" for a
-      // change of topic). Keep the marker text, but force a new line to start at
-      // it so speakers don't run together. Treated as an extra hard break.
+      // change of topic). Force a new line at it so speakers don't run together.
       const speakerBreak = /^\s*>>/.test(w.text);
+      // Safety cap only: split a line that would exceed maxLineWords (words =
+      // caption segments / highlight units). Data lines are usually well under it,
+      // so it rarely fires; lowering it lets the user force shorter lines.
+      const wordCount = current.words.length + 1;
 
-      if (current.words.length && (hardBreak || speakerBreak || gap > LINE_BREAK_GAP_MS || wordCount > settings.maxLineWords)) {
+      if (current.words.length && (dataBreak || speakerBreak || wordCount > settings.maxLineWords)) {
         flush();
         current = { words: [], start: w.start, end: w.end };
       }
