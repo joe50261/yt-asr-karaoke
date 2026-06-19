@@ -38,6 +38,10 @@
   // long lines wrap via CSS — there is NO word-count cap. This gap is a fallback
   // used ONLY for captions that carry no \n line structure at all.
   const LINE_BREAK_GAP_MS = 700;
+  // A line lights up this many ms before its first word — applied as one shared
+  // lead-in so a line is active over [start - LEAD, nextStart - LEAD): contiguous,
+  // never overlapping. (Overlapping windows made a click land on the previous line.)
+  const LINE_LEAD_MS = 80;
 
   // Live settings from the popup, relayed by bridge.js (chrome.storage -> postMessage)
   // because this MAIN-world script cannot read chrome.storage.
@@ -832,14 +836,7 @@
     let scrollRow = null;
     entries.forEach((e, ei) => {
       const rows = state.transcriptByVariant[e.key] || [];
-      let idx = -1;
-      for (let i = 0; i < e.lines.length; i++) {
-        const next = e.lines[i + 1];
-        if (t >= e.lines[i].start - 80 && (!next || t < next.start + 80)) {
-          idx = i;
-          break;
-        }
-      }
+      const idx = findActiveLineIndex(e.lines, t);
       const entry = idx >= 0 ? rows[idx] : null;
       if (entry) {
         nowActive.push(entry);
@@ -870,13 +867,22 @@
     });
   }
 
-  function findActiveLine(lines, t) {
+  // The active line is the LAST line whose lead-in (start - LINE_LEAD_MS) has been
+  // reached. Lines are sorted by start, so this is unambiguous: a line stays active
+  // until exactly the next line's lead-in — no overlap, no first-vs-last tie. The
+  // overlay and the transcript both go through this, so they can never disagree.
+  function findActiveLineIndex(lines, t) {
+    let idx = -1;
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const next = lines[i + 1];
-      if (t >= line.start - 80 && (!next || t < next.start + 80)) return line;
+      if (t >= lines[i].start - LINE_LEAD_MS) idx = i;
+      else break;
     }
-    return null;
+    return idx;
+  }
+
+  function findActiveLine(lines, t) {
+    const i = findActiveLineIndex(lines, t);
+    return i >= 0 ? lines[i] : null;
   }
 
   function wordState(w, t) {
