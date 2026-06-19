@@ -45,11 +45,12 @@
 
   // Live settings from the popup, relayed by bridge.js (chrome.storage -> postMessage)
   // because this MAIN-world script cannot read chrome.storage.
-  const settings = { dualTrack: false };
+  const settings = { dualTrack: false, captionStyle: 'default' };
   window.addEventListener('message', (e) => {
     if (e.source !== window || e.data?.__ykSettings !== true) return;
     const s = e.data.settings || {};
     settings.dualTrack = !!s.dualTrack;
+    settings.captionStyle = s.captionStyle || 'default';
   });
   // Nudge the bridge to push now, in case it initialized before this script ran.
   window.postMessage({ __ykSettingsRequest: true }, '*');
@@ -440,6 +441,45 @@
         transform: scale(1.04);
         display: inline-block;
       }
+
+      /* ---- Caption style presets (popup: 預設 / YT / 進階). The rules above are
+         the DEFAULT look; data-style on the overlay root switches it live. ---- */
+      /* YT: match YouTube's native caption — weight 400, white, near-square, no
+         glow/scale; the active word is a flat gold (no flourish). */
+      #${ROOT_ID}[data-style="yt"] .yk-line { background: rgba(8, 8, 8, 0.75); border-radius: 2px; }
+      #${ROOT_ID}[data-style="yt"] .yk-word { font-weight: 400; letter-spacing: normal; }
+      #${ROOT_ID}[data-style="yt"] .yk-word--future { color: #fff; }
+      #${ROOT_ID}[data-style="yt"] .yk-word--active {
+        color: #ffe566;
+        text-shadow: none;
+        transform: none;
+        display: inline;
+      }
+      /* Advanced: the active word fills left-to-right over its spoken duration
+         (--yk-fill, set per frame in render) with a progress underline; no scale
+         (no layout jitter); lighter box + edge shadow; translation subordinate. */
+      #${ROOT_ID}[data-style="advanced"] .yk-line { background: rgba(0, 0, 0, 0.5); border-radius: 8px; }
+      #${ROOT_ID}[data-style="advanced"] .yk-word {
+        font-weight: 500;
+        letter-spacing: normal;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+      }
+      #${ROOT_ID}[data-style="advanced"] .yk-word--future { color: rgba(255, 255, 255, 0.92); }
+      #${ROOT_ID}[data-style="advanced"] .yk-word--past { color: rgba(255, 255, 255, 0.5); }
+      #${ROOT_ID}[data-style="advanced"] .yk-word--active {
+        color: transparent;
+        -webkit-text-fill-color: transparent;
+        background: linear-gradient(90deg, #f6c454 0 var(--yk-fill, 0%), rgba(255, 255, 255, 0.96) var(--yk-fill, 0%) 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        border-bottom: 2px solid #f6c454;
+        transform: none;
+        text-shadow: none;
+        display: inline-block;
+        line-height: 1.1;
+      }
+      #${ROOT_ID}[data-style="advanced"] .yk-lines .yk-line:nth-child(2) { opacity: 0.92; }
+      #${ROOT_ID}[data-style="advanced"] .yk-lines .yk-line:nth-child(2) .yk-word { font-size: clamp(15px, 2vw, 22px); }
       #${ROOT_ID}[data-hidden="true"] { opacity: 0; }
       #${TOGGLE_ID} {
         position: absolute;
@@ -916,6 +956,8 @@
   // state.bind; rebuild them whenever the row count changes.
   function render(t) {
     const root = ensureOverlay();
+    const style = settings.captionStyle || 'default';
+    if (root.dataset.style !== style) root.dataset.style = style;
     const binds = state.bind;
     if (state.rendered.length !== binds.length) {
       state.rendered = binds.map(() => {
@@ -957,6 +999,13 @@
         if (!el) return;
         const next = `yk-word yk-word--${cls}`;
         if (el.className !== next) el.className = next;
+        // Advanced style: fill the active word left-to-right over its spoken
+        // duration (a true per-word sweep). --yk-fill is the gradient stop %.
+        if (style === 'advanced' && cls === 'active') {
+          const dur = Math.max(1, w.end - w.start);
+          const pct = Math.max(0, Math.min(100, ((t - w.start) / dur) * 100));
+          el.style.setProperty('--yk-fill', `${pct.toFixed(1)}%`);
+        }
       });
     });
     root.dataset.hidden = anyVisible ? 'false' : 'true';

@@ -61,6 +61,14 @@ aside, and remembers its open/closed state and width.
 
 Click the toolbar icon:
 
+- **Caption style** — the overlay's look, applied live:
+  - `預設` (default) — gold active word with a soft glow and a slight pop.
+  - `YT` — matches YouTube's native caption (weight 400, white, near-square box);
+    the active word is a flat gold, no flourish.
+  - `進階` (advanced) — the active word **fills left-to-right over its spoken
+    duration** (a true per-word sweep) with a progress underline and no scaling
+    jitter; lighter box with an edge shadow; in dual-track the translation row is
+    subordinate (smaller, dimmer) so the source leads.
 - **Bilingual (dual-track)** — when an auto-translation is selected, show the
   original *and* the translation as two stacked, per-word rows (overlay) and
   interleaved in the transcript. Each row is timed to its own track and follows

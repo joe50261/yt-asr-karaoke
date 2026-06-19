@@ -7,7 +7,7 @@
 (function () {
   'use strict';
 
-  const DEFAULTS = { dualTrack: false };
+  const DEFAULTS = { dualTrack: false, captionStyle: 'default' };
 
   function push() {
     chrome.storage.local.get(DEFAULTS, (settings) => {

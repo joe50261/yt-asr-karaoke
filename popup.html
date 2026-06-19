@@ -48,6 +48,15 @@
         font: inherit;
         text-align: right;
       }
+      select {
+        padding: 5px 8px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        font: inherit;
+        background: #fff;
+        cursor: pointer;
+        flex: 0 0 auto;
+      }
       .switch {
         position: relative;
         width: 38px;
@@ -102,6 +111,18 @@
   <body>
     <h1>YouTube Caption Karaoke</h1>
     <p class="sub">Auto-caption karaoke with real per-word highlighting.</p>
+
+    <div class="row">
+      <label for="captionStyle">
+        Caption style
+        <span class="desc">Overlay look: 預設 (gold pop) · YT (native) · 進階 (per-word fill).</span>
+      </label>
+      <select id="captionStyle">
+        <option value="default">預設</option>
+        <option value="yt">YT</option>
+        <option value="advanced">進階</option>
+      </select>
+    </div>
 
     <div class="row">
       <label for="dualTrack">
