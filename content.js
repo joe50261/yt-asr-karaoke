@@ -29,8 +29,23 @@
   const ROOT_ID = 'yt-karaoke-root';
   const TOGGLE_ID = 'yt-karaoke-toggle';
   const ENABLED_KEY = 'yt-karaoke-enabled';
-  const MAX_LINE_CHARS = 48;
+  const DEFAULT_MAX_LINE_CHARS = 48;
   const LINE_BREAK_GAP_MS = 700;
+
+  // Live settings from the popup, relayed by bridge.js (chrome.storage -> postMessage)
+  // because this MAIN-world script cannot read chrome.storage. Defaults apply until
+  // the bridge responds; syncBinding()'s signature includes these so a change
+  // (dual-track toggle, line length) re-binds automatically.
+  const settings = { dualTrack: false, maxLineChars: DEFAULT_MAX_LINE_CHARS };
+  window.addEventListener('message', (e) => {
+    if (e.source !== window || e.data?.__ykSettings !== true) return;
+    const s = e.data.settings || {};
+    settings.dualTrack = !!s.dualTrack;
+    const n = Math.round(Number(s.maxLineChars));
+    settings.maxLineChars = Number.isFinite(n) ? Math.min(200, Math.max(10, n)) : DEFAULT_MAX_LINE_CHARS;
+  });
+  // Nudge the bridge to push now, in case it initialized before this script ran.
+  window.postMessage({ __ykSettingsRequest: true }, '*');
 
   // Single logger for the whole content script: every line emitted to the page
   // console is prefixed with a stable tag so it is unambiguously attributable to
@@ -107,15 +122,13 @@
 
   function freshState() {
     return {
-      words: [],
-      lines: [],
+      bind: [], // [{ key, words, lines }] — 1 variant, or 2 when dual-track is on
+      bindSig: null, // signature of (variants + maxLineChars) currently parsed in
+      rendered: [], // [{ lineEl, lineKey, wordEls }] aligned to bind, one row each
       video: null,
       raf: 0,
       track: null,
       trackLang: '',
-      boundKey: null, // which variant is parsed into words/lines: '' original, or a tlang
-      lineKey: '',
-      wordEls: [],
       stage: 'idle',
       videoId: '',
       active: false,
@@ -305,7 +318,7 @@
       // it so speakers don't run together. Treated as an extra hard break.
       const speakerBreak = /^\s*>>/.test(w.text);
 
-      if (current.words.length && (hardBreak || speakerBreak || gap > LINE_BREAK_GAP_MS || len > MAX_LINE_CHARS)) {
+      if (current.words.length && (hardBreak || speakerBreak || gap > LINE_BREAK_GAP_MS || len > settings.maxLineChars)) {
         flush();
         current = { words: [], start: w.start, end: w.end };
       }
@@ -345,6 +358,10 @@
         transform: translateX(-50%);
         z-index: 65;
         max-width: 92%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
         text-align: center;
         pointer-events: none;
         font-family: "YouTube Noto", Roboto, Arial, sans-serif;
@@ -445,10 +462,10 @@
     player.appendChild(btn);
   }
 
-  function findActiveLine(t) {
-    for (let i = 0; i < state.lines.length; i++) {
-      const line = state.lines[i];
-      const next = state.lines[i + 1];
+  function findActiveLine(lines, t) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const next = lines[i + 1];
       if (t >= line.start - 80 && (!next || t < next.start + 80)) return line;
     }
     return null;
@@ -460,38 +477,55 @@
     return 'past';
   }
 
+  // Render every bound variant as its own stacked line (1 normally, 2 for
+  // dual-track). state.rendered holds the per-row line elements aligned to
+  // state.bind; rebuild them whenever the row count changes.
   function render(t) {
     const root = ensureOverlay();
-    const line = findActiveLine(t);
-    if (!line) {
-      root.dataset.hidden = 'true';
-      root.replaceChildren();
-      state.lineKey = '';
-      state.wordEls = [];
-      return;
-    }
-    root.dataset.hidden = 'false';
-    const lineKey = `${line.start}|${line.words.map((w) => w.text).join('')}`;
-    if (lineKey !== state.lineKey) {
-      state.lineKey = lineKey;
-      const lineEl = document.createElement('div');
-      lineEl.className = 'yk-line';
-      state.wordEls = line.words.map((w) => {
-        const span = document.createElement('span');
-        span.className = 'yk-word yk-word--future';
-        span.textContent = w.text;
-        lineEl.appendChild(span);
-        return span;
+    const binds = state.bind;
+    if (state.rendered.length !== binds.length) {
+      state.rendered = binds.map(() => {
+        const lineEl = document.createElement('div');
+        lineEl.className = 'yk-line';
+        return { lineEl, lineKey: '', wordEls: [] };
       });
-      root.replaceChildren(lineEl);
+      root.replaceChildren(...state.rendered.map((r) => r.lineEl));
     }
-    line.words.forEach((w, i) => {
-      const cls = wordState(w, t);
-      const el = state.wordEls[i];
-      if (!el) return;
-      const next = `yk-word yk-word--${cls}`;
-      if (el.className !== next) el.className = next;
+    let anyVisible = false;
+    binds.forEach((b, i) => {
+      const r = state.rendered[i];
+      const line = findActiveLine(b.lines, t);
+      if (!line) {
+        if (r.lineKey !== '') {
+          r.lineEl.replaceChildren();
+          r.lineKey = '';
+          r.wordEls = [];
+        }
+        r.lineEl.style.display = 'none';
+        return;
+      }
+      anyVisible = true;
+      r.lineEl.style.display = '';
+      const lineKey = `${line.start}|${line.words.map((w) => w.text).join('')}`;
+      if (lineKey !== r.lineKey) {
+        r.lineKey = lineKey;
+        r.wordEls = line.words.map((w) => {
+          const span = document.createElement('span');
+          span.className = 'yk-word yk-word--future';
+          span.textContent = w.text;
+          return span;
+        });
+        r.lineEl.replaceChildren(...r.wordEls);
+      }
+      line.words.forEach((w, j) => {
+        const cls = wordState(w, t);
+        const el = r.wordEls[j];
+        if (!el) return;
+        const next = `yk-word yk-word--${cls}`;
+        if (el.className !== next) el.className = next;
+      });
     });
+    root.dataset.hidden = anyVisible ? 'false' : 'true';
   }
 
   // The asr caption variant the player CURRENTLY displays: { tlang } where tlang is
@@ -513,24 +547,41 @@
     return { tlang: cur.translationLanguage?.languageCode || '' };
   }
 
-  // Reactively bind to whichever variant the player currently displays (original
-  // asr or a specific auto-translation), re-parsing only when the variant changes.
-  // Returns true when parsed lines exist for the current variant; false when the
-  // selection is not our asr track, or its body has not been captured yet — the
-  // caller then steps aside so the native caption shows (never a blank).
+  // Reactively bind to the variant(s) the player currently displays. Normally that
+  // is the single selected variant; with dual-track on AND a translation selected,
+  // we also bind the original asr so both render. Re-parses only when the wanted
+  // set or the line-length setting changes; a wanted-but-not-yet-captured variant
+  // is added as soon as its body appears. Returns true when at least one variant is
+  // bound; false when the selection is not our asr track or nothing is captured yet
+  // (caller steps aside so the native caption shows — never a blank).
   function syncBinding() {
     const sel = currentAsrSelection();
     if (!sel) return false;
-    if (sel.tlang === state.boundKey && state.lines.length) return true;
-    const json = capturedJsonForVariant(state.track, sel.tlang);
-    if (!json) return false;
-    state.words = parseCaptionEvents(json);
-    state.lines = groupLines(state.words);
-    state.boundKey = sel.tlang;
-    state.lineKey = '';
-    state.wordEls = [];
-    log.info('Bound:', sel.tlang ? `${state.trackLang}→${sel.tlang}` : state.trackLang);
-    return state.lines.length > 0;
+    const wantKeys = settings.dualTrack && sel.tlang ? ['', sel.tlang] : [sel.tlang];
+    const sig = `${wantKeys.join('')}@${settings.maxLineChars}`;
+    if (sig !== state.bindSig) {
+      state.bindSig = sig;
+      state.bind = [];
+      state.rendered = [];
+    }
+    if (state.bind.length !== wantKeys.length) {
+      const before = state.bind.length;
+      const have = new Set(state.bind.map((b) => b.key));
+      for (const key of wantKeys) {
+        if (have.has(key)) continue;
+        const json = capturedJsonForVariant(state.track, key);
+        if (!json) continue;
+        const lines = groupLines(parseCaptionEvents(json));
+        if (!lines.length) continue;
+        state.bind.push({ key, lines });
+      }
+      if (state.bind.length > before) {
+        state.bind.sort((a, b) => wantKeys.indexOf(a.key) - wantKeys.indexOf(b.key));
+        state.rendered = []; // order/count changed → rebuild rows
+        log.info('Bound:', state.bind.map((b) => b.key || state.trackLang).join(' + '));
+      }
+    }
+    return state.bind.length > 0;
   }
 
   // Engage: we own the caption area — hide the native caption (via .yk-engaged) so
@@ -549,8 +600,9 @@
       root.dataset.hidden = 'true';
       root.replaceChildren();
     }
-    state.lineKey = '';
-    state.wordEls = [];
+    state.bind = [];
+    state.bindSig = null;
+    state.rendered = [];
   }
 
   function tick() {
@@ -669,8 +721,7 @@
       window.__YT_KARAOKE_ERR__ = {
         stage: state.stage,
         message: String(err && err.message ? err.message : err),
-        words: state.words.length,
-        lines: state.lines.length,
+        bound: state.bind.length,
       };
       log.error('failed at stage', state.stage, err);
       state.active = false;
