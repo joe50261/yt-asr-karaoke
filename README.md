@@ -55,7 +55,8 @@ interleaved by time as bilingual pairs — each translation sits tight under its
 original with looser space between pairs, and is shown a shade lighter
 (distinguished by colour, not indentation) — each highlighting its own
 active line. The panel stays in sync with playback, hides when the extension steps
-aside, and remembers its open/closed state and width.
+aside, and remembers its open/closed state and width. It **follows YouTube's own
+light/dark theme** (keyed off `<html dark>`), so it matches the page in either mode.
 
 ## Popup options
 

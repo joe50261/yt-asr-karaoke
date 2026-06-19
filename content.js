@@ -520,6 +520,22 @@
       #movie_player:hover #${TRANSCRIPT_BTN_ID} { opacity: 0.85; }
       #${TRANSCRIPT_BTN_ID}:hover { opacity: 1; }
       #${TRANSCRIPT_ID} {
+        /* Theme tokens — light defaults; the html[dark] block below swaps them so
+           the panel follows YouTube's own theme (YT sets <html dark> live). */
+        --ykt-bg: rgba(255, 255, 255, 0.98);
+        --ykt-fg: #0f0f0f;
+        --ykt-line: #5a5a5a;
+        --ykt-muted: #606060;
+        --ykt-border: #e5e5e5;
+        --ykt-hover: #f2f2f2;
+        --ykt-active-bg: #eef4ff;
+        --ykt-accent: #065fd4;
+        --ykt-grip-hover: rgba(6, 95, 212, 0.3);
+        --ykt-past: #9a9a9a;
+        --ykt-word-active: #b8860b;
+        --ykt-variant: #9aa0a6;
+        --ykt-variant-active: #3c4043;
+        --ykt-shadow: rgba(0, 0, 0, 0.28);
         position: fixed;
         top: 56px;
         right: 0;
@@ -529,13 +545,29 @@
         z-index: 2400;
         display: flex;
         flex-direction: column;
-        background: rgba(255, 255, 255, 0.98);
-        color: #0f0f0f;
+        background: var(--ykt-bg);
+        color: var(--ykt-fg);
         border-radius: 12px 0 0 12px;
-        box-shadow: -4px 0 24px rgba(0, 0, 0, 0.28);
+        box-shadow: -4px 0 24px var(--ykt-shadow);
         font: 14px/1.5 "YouTube Noto", Roboto, Arial, sans-serif;
         transform: translateX(calc(100% + 4px));
         transition: transform 0.2s ease;
+      }
+      html[dark] #${TRANSCRIPT_ID} {
+        --ykt-bg: rgba(24, 24, 24, 0.98);
+        --ykt-fg: #f1f1f1;
+        --ykt-line: #aaaaaa;
+        --ykt-muted: #aaaaaa;
+        --ykt-border: #383838;
+        --ykt-hover: #272727;
+        --ykt-active-bg: rgba(62, 166, 255, 0.16);
+        --ykt-accent: #3ea6ff;
+        --ykt-grip-hover: rgba(62, 166, 255, 0.35);
+        --ykt-past: #6f6f6f;
+        --ykt-word-active: #ffd54f;
+        --ykt-variant: #808080;
+        --ykt-variant-active: #c7c7c7;
+        --ykt-shadow: rgba(0, 0, 0, 0.6);
       }
       #${TRANSCRIPT_ID}[data-open="true"] { transform: translateX(0); }
       #${TRANSCRIPT_ID} .ykt-head {
@@ -544,7 +576,7 @@
         align-items: center;
         justify-content: space-between;
         padding: 10px 14px;
-        border-bottom: 1px solid #e5e5e5;
+        border-bottom: 1px solid var(--ykt-border);
         font-weight: 700;
       }
       #${TRANSCRIPT_ID} .ykt-close {
@@ -553,7 +585,7 @@
         cursor: pointer;
         font-size: 20px;
         line-height: 1;
-        color: #606060;
+        color: var(--ykt-muted);
       }
       #${TRANSCRIPT_ID} .ykt-body {
         position: relative;
@@ -565,28 +597,28 @@
       #${TRANSCRIPT_ID} .ykt-line {
         padding: 6px 14px;
         cursor: pointer;
-        color: #5a5a5a;
+        color: var(--ykt-line);
         border-left: 3px solid transparent;
       }
-      #${TRANSCRIPT_ID} .ykt-line:hover { background: #f2f2f2; }
+      #${TRANSCRIPT_ID} .ykt-line:hover { background: var(--ykt-hover); }
       #${TRANSCRIPT_ID} .ykt-line[data-active="true"] {
-        background: #eef4ff;
-        border-left-color: #065fd4;
-        color: #0f0f0f;
+        background: var(--ykt-active-bg);
+        border-left-color: var(--ykt-accent);
+        color: var(--ykt-fg);
       }
-      #${TRANSCRIPT_ID} .ykt-w--past { color: #9a9a9a; }
-      #${TRANSCRIPT_ID} .ykt-w--active { color: #b8860b; font-weight: 700; }
+      #${TRANSCRIPT_ID} .ykt-w--past { color: var(--ykt-past); }
+      #${TRANSCRIPT_ID} .ykt-w--active { color: var(--ykt-word-active); font-weight: 700; }
       /* In dual-track, translation rows are distinguished by COLOUR only (no indent):
          one shade lighter than the original. They are also GROUPED with their
          original — tight within the bilingual pair, loose between pairs — so the two
          read as one unit. Adjacency-scoped (':has(+…)' / '+'), so single-track (no
          [data-variant] rows) keeps its uniform 6px spacing untouched. */
       #${TRANSCRIPT_ID} .ykt-line[data-variant] {
-        color: #9aa0a6;
+        color: var(--ykt-variant);
         padding-top: 2px;
         padding-bottom: 2px;
       }
-      #${TRANSCRIPT_ID} .ykt-line[data-variant][data-active="true"] { color: #3c4043; }
+      #${TRANSCRIPT_ID} .ykt-line[data-variant][data-active="true"] { color: var(--ykt-variant-active); }
       #${TRANSCRIPT_ID} .ykt-line:has(+ .ykt-line[data-variant]) { padding-bottom: 2px; }
       #${TRANSCRIPT_ID} .ykt-line[data-variant] + .ykt-line { margin-top: 12px; }
       /* Drag the left edge to resize the panel width. */
@@ -599,7 +631,7 @@
         cursor: ew-resize;
         z-index: 1;
       }
-      #${TRANSCRIPT_ID} .ykt-resizer:hover { background: rgba(6, 95, 212, 0.3); }
+      #${TRANSCRIPT_ID} .ykt-resizer:hover { background: var(--ykt-grip-hover); }
     `;
     document.head.appendChild(style);
   }
