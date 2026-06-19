@@ -75,6 +75,9 @@ Click the toolbar icon:
   that track's line structure, so the two stay roughly in step. Needs both bodies
   loaded: select `自動產生` once, then `自動翻譯` (selecting a translation
   directly never loads the original — it then shows just the one available).
+- **Translation on top** — in dual-track, stack the translation above the
+  original instead of below. Applies to both the overlay and the side transcript
+  (they follow the same row order).
 
 ## Line breaks
 

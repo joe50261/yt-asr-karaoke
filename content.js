@@ -45,12 +45,13 @@
 
   // Live settings from the popup, relayed by bridge.js (chrome.storage -> postMessage)
   // because this MAIN-world script cannot read chrome.storage.
-  const settings = { dualTrack: false, captionStyle: 'default' };
+  const settings = { dualTrack: false, captionStyle: 'default', translationOnTop: false };
   window.addEventListener('message', (e) => {
     if (e.source !== window || e.data?.__ykSettings !== true) return;
     const s = e.data.settings || {};
     settings.dualTrack = !!s.dualTrack;
     settings.captionStyle = s.captionStyle || 'default';
+    settings.translationOnTop = !!s.translationOnTop;
   });
   // Nudge the bridge to push now, in case it initialized before this script ran.
   window.postMessage({ __ykSettingsRequest: true }, '*');
@@ -478,8 +479,8 @@
         display: inline-block;
         line-height: 1.1;
       }
-      #${ROOT_ID}[data-style="advanced"] .yk-lines .yk-line:nth-child(2) { opacity: 0.92; }
-      #${ROOT_ID}[data-style="advanced"] .yk-lines .yk-line:nth-child(2) .yk-word { font-size: clamp(15px, 2vw, 22px); }
+      #${ROOT_ID}[data-style="advanced"] .yk-lines .yk-line[data-role="translation"]:not(:only-child) { opacity: 0.92; }
+      #${ROOT_ID}[data-style="advanced"] .yk-lines .yk-line[data-role="translation"]:not(:only-child) .yk-word { font-size: clamp(15px, 2vw, 22px); }
       #${ROOT_ID}[data-hidden="true"] { opacity: 0; }
       #${TOGGLE_ID} {
         position: absolute;
@@ -970,6 +971,10 @@
     let anyVisible = false;
     binds.forEach((b, i) => {
       const r = state.rendered[i];
+      // Tag the row so style rules (e.g. advanced's subordinate translation) can
+      // target the translation regardless of whether it's on top or bottom.
+      const role = b.key ? 'translation' : 'original';
+      if (r.lineEl.dataset.role !== role) r.lineEl.dataset.role = role;
       const line = findActiveLine(b.lines, t);
       if (!line) {
         if (r.lineKey !== '') {
@@ -1040,7 +1045,11 @@
   function syncBinding() {
     const sel = currentAsrSelection();
     if (!sel) return false;
-    const wantKeys = settings.dualTrack && sel.tlang ? ['', sel.tlang] : [sel.tlang];
+    // In dual-track, order the stacked rows: original-then-translation by default,
+    // or translation-then-original when translationOnTop is set (applies to the
+    // overlay rows and the side transcript, which both follow bind order).
+    const pair = settings.translationOnTop ? [sel.tlang, ''] : ['', sel.tlang];
+    const wantKeys = settings.dualTrack && sel.tlang ? pair : [sel.tlang];
     const sig = wantKeys.join('|');
     if (sig !== state.bindSig) {
       state.bindSig = sig;
