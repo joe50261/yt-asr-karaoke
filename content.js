@@ -536,9 +536,18 @@
       #${TRANSCRIPT_ID} .ykt-w--past { color: #9a9a9a; }
       #${TRANSCRIPT_ID} .ykt-w--active { color: #b8860b; font-weight: 700; }
       /* In dual-track, translation rows are distinguished by COLOUR only (no indent):
-         always one shade lighter than the original — resting and active alike. */
-      #${TRANSCRIPT_ID} .ykt-line[data-variant] { color: #9aa0a6; }
+         one shade lighter than the original. They are also GROUPED with their
+         original — tight within the bilingual pair, loose between pairs — so the two
+         read as one unit. Adjacency-scoped (':has(+…)' / '+'), so single-track (no
+         [data-variant] rows) keeps its uniform 6px spacing untouched. */
+      #${TRANSCRIPT_ID} .ykt-line[data-variant] {
+        color: #9aa0a6;
+        padding-top: 2px;
+        padding-bottom: 2px;
+      }
       #${TRANSCRIPT_ID} .ykt-line[data-variant][data-active="true"] { color: #3c4043; }
+      #${TRANSCRIPT_ID} .ykt-line:has(+ .ykt-line[data-variant]) { padding-bottom: 2px; }
+      #${TRANSCRIPT_ID} .ykt-line[data-variant] + .ykt-line { margin-top: 12px; }
       /* Drag the left edge to resize the panel width. */
       #${TRANSCRIPT_ID} .ykt-resizer {
         position: absolute;

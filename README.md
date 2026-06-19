@@ -51,8 +51,9 @@ karaoke-highlighted as it's spoken. **Click any line to jump** the video to it.
 **Drag the panel's left edge to resize its width**; **double-click that edge to
 fit the width** to the longest line (remembered per browser). In
 dual-track mode the transcript is bilingual: original and translation rows are
-interleaved by time (translation rows shown a shade lighter — distinguished by
-colour, not indentation), each highlighting its own
+interleaved by time as bilingual pairs — each translation sits tight under its
+original with looser space between pairs, and is shown a shade lighter
+(distinguished by colour, not indentation) — each highlighting its own
 active line. The panel stays in sync with playback, hides when the extension steps
 aside, and remembers its open/closed state and width.
 
