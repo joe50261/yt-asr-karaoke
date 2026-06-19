@@ -34,8 +34,9 @@ caption, not something we force on). See *Using it* below.
    language, still per word.
 4. The **Karaoke: ON/OFF** button (top-right of the player, visible on hover)
    toggles the overlay. State is remembered per browser (`localStorage`).
-5. **Resize the caption font**: hover the overlay and drag the small grip at its
-   bottom-right corner up/down; double-click the grip to reset. Saved per browser.
+5. **Resize the caption box width**: hover the overlay and drag the grip on its
+   right edge (the centered box widens/narrows symmetrically, changing how lines
+   wrap); double-click the grip to reset to fit the text. Saved per browser.
 
 If you select a **non-auto** caption (a manual/uploaded subtitle) or turn
 captions off, the extension **steps aside** and lets the player's own caption

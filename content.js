@@ -33,7 +33,7 @@
   const ENABLED_KEY = 'yt-karaoke-enabled';
   const TRANSCRIPT_OPEN_KEY = 'yt-karaoke-transcript-open';
   const TRANSCRIPT_WIDTH_KEY = 'yt-karaoke-transcript-width';
-  const OVERLAY_SCALE_KEY = 'yt-karaoke-overlay-scale';
+  const OVERLAY_WIDTH_KEY = 'yt-karaoke-overlay-width';
   // Lines break only where the caption DATA breaks (its own \n line structure);
   // long lines wrap via CSS — there is NO word-count cap. This gap is a fallback
   // used ONLY for captions that carry no \n line structure at all.
@@ -392,15 +392,16 @@
       }
       #${ROOT_ID} .yk-resizer {
         position: absolute;
-        right: -3px;
-        bottom: -3px;
-        width: 18px;
-        height: 18px;
-        cursor: nwse-resize;
+        right: -5px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 8px;
+        height: 46px;
+        cursor: ew-resize;
         pointer-events: auto;
         opacity: 0;
-        background: linear-gradient(135deg, transparent 45%, rgba(255, 229, 102, 0.9) 45%);
-        border-radius: 0 0 6px 0;
+        background: rgba(255, 229, 102, 0.9);
+        border-radius: 4px;
         transition: opacity 0.15s ease;
       }
       .html5-video-player:hover #${ROOT_ID} .yk-resizer,
@@ -408,6 +409,7 @@
       #${ROOT_ID} .yk-resizer:hover { opacity: 1; }
       #${ROOT_ID} .yk-line {
         display: inline-block;
+        width: var(--yk-box-width, auto);
         padding: 0.35em 0.65em;
         border-radius: 6px;
         background: rgba(8, 8, 8, 0.72);
@@ -416,7 +418,7 @@
       }
       #${ROOT_ID} .yk-word {
         display: inline;
-        font-size: calc(clamp(18px, 2.4vw, 28px) * var(--yk-scale, 1));
+        font-size: clamp(18px, 2.4vw, 28px);
         font-weight: 600;
         letter-spacing: 0.02em;
         white-space: pre-wrap;
@@ -565,54 +567,60 @@
     const linesBox = document.createElement('div');
     linesBox.className = 'yk-lines';
     root.appendChild(linesBox);
-    root.style.setProperty('--yk-scale', getOverlayScale());
+    const w = getOverlayWidth();
+    if (w) root.style.setProperty('--yk-box-width', w);
     addOverlayResizer(root);
     player.appendChild(root);
     return root;
   }
 
-  function getOverlayScale() {
+  function getOverlayWidth() {
     try {
-      const s = parseFloat(localStorage.getItem(OVERLAY_SCALE_KEY));
-      return Number.isFinite(s) ? Math.min(3, Math.max(0.5, s)) : 1;
+      return localStorage.getItem(OVERLAY_WIDTH_KEY) || '';
     } catch {
-      return 1;
+      return '';
     }
   }
 
-  // Drag the bottom-right grip to scale the karaoke caption font; double-click to
-  // reset. The scale is a --yk-scale CSS variable on the overlay root, persisted.
+  // Drag the right-edge grip to set the caption box width (controls wrapping); the
+  // centered box grows symmetrically. Double-click to reset to fit content. Width
+  // is a --yk-box-width CSS var on the overlay root, persisted.
   function addOverlayResizer(root) {
     const grip = document.createElement('div');
     grip.className = 'yk-resizer';
-    let startY = 0;
-    let startScale = 1;
-    const apply = (scale) => {
-      const s = Math.min(3, Math.max(0.5, scale));
-      root.style.setProperty('--yk-scale', s);
+    let centerX = 0;
+    let maxW = 0;
+    const onMove = (e) => {
+      const w = Math.min(maxW, Math.max(120, (e.clientX - centerX) * 2));
+      root.style.setProperty('--yk-box-width', `${Math.round(w)}px`);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
       try {
-        localStorage.setItem(OVERLAY_SCALE_KEY, String(s));
+        localStorage.setItem(OVERLAY_WIDTH_KEY, root.style.getPropertyValue('--yk-box-width'));
       } catch {
         /* ignore */
       }
     };
-    const onMove = (e) => apply(startScale + (e.clientY - startY) / 160); // drag down => bigger
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
     grip.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      startY = e.clientY;
-      startScale = getOverlayScale();
+      const pr = getPlayerEl().getBoundingClientRect();
+      centerX = pr.left + pr.width / 2;
+      maxW = pr.width * 0.92;
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     });
     grip.addEventListener('dblclick', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      apply(1);
+      root.style.removeProperty('--yk-box-width');
+      try {
+        localStorage.removeItem(OVERLAY_WIDTH_KEY);
+      } catch {
+        /* ignore */
+      }
     });
     root.appendChild(grip);
   }
