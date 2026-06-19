@@ -1,19 +1,19 @@
 'use strict';
 
-const DEFAULTS = { dualTrack: false, maxLineChars: 48 };
+const DEFAULTS = { dualTrack: false, maxLineWords: 10 };
 
-function clampChars(n) {
+function clampWords(n) {
   n = Math.round(Number(n));
-  if (!Number.isFinite(n)) return DEFAULTS.maxLineChars;
-  return Math.min(200, Math.max(10, n));
+  if (!Number.isFinite(n)) return DEFAULTS.maxLineWords;
+  return Math.min(40, Math.max(3, n));
 }
 
 const dualEl = document.getElementById('dualTrack');
-const maxEl = document.getElementById('maxLineChars');
+const maxEl = document.getElementById('maxLineWords');
 
 chrome.storage.local.get(DEFAULTS, (s) => {
   dualEl.checked = !!s.dualTrack;
-  maxEl.value = clampChars(s.maxLineChars);
+  maxEl.value = clampWords(s.maxLineWords);
 });
 
 dualEl.addEventListener('change', () => {
@@ -21,7 +21,7 @@ dualEl.addEventListener('change', () => {
 });
 
 maxEl.addEventListener('change', () => {
-  const v = clampChars(maxEl.value);
+  const v = clampWords(maxEl.value);
   maxEl.value = v;
-  chrome.storage.local.set({ maxLineChars: v });
+  chrome.storage.local.set({ maxLineWords: v });
 });

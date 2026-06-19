@@ -29,20 +29,22 @@
   const ROOT_ID = 'yt-karaoke-root';
   const TOGGLE_ID = 'yt-karaoke-toggle';
   const ENABLED_KEY = 'yt-karaoke-enabled';
-  const DEFAULT_MAX_LINE_CHARS = 48;
+  const DEFAULT_MAX_LINE_WORDS = 10;
   const LINE_BREAK_GAP_MS = 700;
 
   // Live settings from the popup, relayed by bridge.js (chrome.storage -> postMessage)
   // because this MAIN-world script cannot read chrome.storage. Defaults apply until
   // the bridge responds; syncBinding()'s signature includes these so a change
-  // (dual-track toggle, line length) re-binds automatically.
-  const settings = { dualTrack: false, maxLineChars: DEFAULT_MAX_LINE_CHARS };
+  // (dual-track toggle, line length) re-binds automatically. Line length is counted
+  // in WORDS (caption segments / highlight units), not characters, so a line holds a
+  // consistent number of words across languages (CJK chars are far denser per char).
+  const settings = { dualTrack: false, maxLineWords: DEFAULT_MAX_LINE_WORDS };
   window.addEventListener('message', (e) => {
     if (e.source !== window || e.data?.__ykSettings !== true) return;
     const s = e.data.settings || {};
     settings.dualTrack = !!s.dualTrack;
-    const n = Math.round(Number(s.maxLineChars));
-    settings.maxLineChars = Number.isFinite(n) ? Math.min(200, Math.max(10, n)) : DEFAULT_MAX_LINE_CHARS;
+    const n = Math.round(Number(s.maxLineWords));
+    settings.maxLineWords = Number.isFinite(n) ? Math.min(40, Math.max(3, n)) : DEFAULT_MAX_LINE_WORDS;
   });
   // Nudge the bridge to push now, in case it initialized before this script ran.
   window.postMessage({ __ykSettingsRequest: true }, '*');
@@ -123,7 +125,7 @@
   function freshState() {
     return {
       bind: [], // [{ key, words, lines }] — 1 variant, or 2 when dual-track is on
-      bindSig: null, // signature of (variants + maxLineChars) currently parsed in
+      bindSig: null, // signature of (variants + maxLineWords) currently parsed in
       rendered: [], // [{ lineEl, lineKey, wordEls }] aligned to bind, one row each
       video: null,
       raf: 0,
@@ -311,14 +313,16 @@
       const w = words[i];
       const prev = current.words[current.words.length - 1];
       const gap = prev ? w.start - prev.end : 0;
-      const len = current.words.reduce((n, x) => n + x.text.length, 0) + w.text.length;
+      // Word-level length: count caption segments (highlight units), not characters,
+      // so a line holds a consistent number of words across languages.
+      const wordCount = current.words.length + 1;
       const hardBreak = /\n$/.test(prev?.text || '') || /^\n/.test(w.text);
       // YouTube/CEA captions use ">>" to mark a change of speaker (">>>" for a
       // change of topic). Keep the marker text, but force a new line to start at
       // it so speakers don't run together. Treated as an extra hard break.
       const speakerBreak = /^\s*>>/.test(w.text);
 
-      if (current.words.length && (hardBreak || speakerBreak || gap > LINE_BREAK_GAP_MS || len > settings.maxLineChars)) {
+      if (current.words.length && (hardBreak || speakerBreak || gap > LINE_BREAK_GAP_MS || wordCount > settings.maxLineWords)) {
         flush();
         current = { words: [], start: w.start, end: w.end };
       }
@@ -558,7 +562,7 @@
     const sel = currentAsrSelection();
     if (!sel) return false;
     const wantKeys = settings.dualTrack && sel.tlang ? ['', sel.tlang] : [sel.tlang];
-    const sig = `${wantKeys.join('')}@${settings.maxLineChars}`;
+    const sig = `${wantKeys.join('')}@${settings.maxLineWords}`;
     if (sig !== state.bindSig) {
       state.bindSig = sig;
       state.bind = [];

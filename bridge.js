@@ -7,7 +7,7 @@
 (function () {
   'use strict';
 
-  const DEFAULTS = { dualTrack: false, maxLineChars: 48 };
+  const DEFAULTS = { dualTrack: false, maxLineWords: 10 };
 
   function push() {
     chrome.storage.local.get(DEFAULTS, (settings) => {
