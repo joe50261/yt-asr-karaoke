@@ -535,9 +535,10 @@
       }
       #${TRANSCRIPT_ID} .ykt-w--past { color: #9a9a9a; }
       #${TRANSCRIPT_ID} .ykt-w--active { color: #b8860b; font-weight: 700; }
-      /* In dual-track, translation rows sit indented + muted under the original. */
-      #${TRANSCRIPT_ID} .ykt-line[data-variant] { padding-left: 30px; color: #707070; }
-      #${TRANSCRIPT_ID} .ykt-line[data-variant][data-active="true"] { color: #0f0f0f; }
+      /* In dual-track, translation rows are distinguished by COLOUR only (no indent):
+         always one shade lighter than the original — resting and active alike. */
+      #${TRANSCRIPT_ID} .ykt-line[data-variant] { color: #9aa0a6; }
+      #${TRANSCRIPT_ID} .ykt-line[data-variant][data-active="true"] { color: #3c4043; }
       /* Drag the left edge to resize the panel width. */
       #${TRANSCRIPT_ID} .ykt-resizer {
         position: absolute;
