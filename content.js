@@ -2,8 +2,22 @@
  * YouTube Caption Karaoke — Manifest V3 content script (MAIN world, document_start).
  *
  * Adapted from the project's karaoke.js. Key differences for the shipped extension:
- *  - Network-capture hooks (fetch / XMLHttpRequest) are installed IMMEDIATELY at
- *    top level so the player's FIRST timedtext json3 request is captured (no CC toggle needed).
+ *  - Caption acquisition model — three distinct roles, never conflate them:
+ *      • player — YouTube's player; the ONLY actor that can FETCH a timedtext
+ *        track, because its requests carry a valid `pot` (proof-of-origin) token.
+ *      • hook   — our passive interception of the player's fetch/XHR calls; it
+ *        only CAPTURES bodies the player itself fetched. The hook never fetches.
+ *      • us     — we never fetch (a direct timedtext fetch is pot-gated and
+ *        returns an empty body) and we never drive the player. There is no
+ *        "fetch"/"抓" concept here: karaoke is a passive BINDING to whatever
+ *        auto-caption the player currently displays. The asr track is selected
+ *        externally (by the user, or automation/MCP); we install the hook, wait
+ *        for it to capture the body, then render. While no auto-caption is
+ *        selected we stay idle — that is the normal waiting state, not an error.
+ *    The hook is installed at top level (document_start) so it is already in place
+ *    when the player makes its first timedtext request.
+ *    (Driving the player to auto-select the asr track is NOT implemented — see
+ *    karaoke.js / project notes; today the auto-caption must be selected manually.)
  *  - Never mutes the video and never disables autoplay-next (no playback/audio interference).
  *  - Handles YouTube SPA navigation: tears down + re-inits per /watch video.
  *  - Real per-word timing only (seg.tOffsetMs). No simulated/interpolated word timing.
@@ -18,8 +32,31 @@
   const MAX_LINE_CHARS = 48;
   const LINE_BREAK_GAP_MS = 700;
 
-  // ---- Global, one-time network capture (installed at document_start) ----
+  // Single logger for the whole content script: every line emitted to the page
+  // console is prefixed with a stable tag so it is unambiguously attributable to
+  // this extension. Never call console.* directly elsewhere — go through log.*.
+  const LOG_TAG = '[YT Karaoke]';
+  const log = {
+    info: (...args) => console.info(LOG_TAG, ...args),
+    warn: (...args) => console.warn(LOG_TAG, ...args),
+    error: (...args) => console.error(LOG_TAG, ...args),
+  };
+
+  // ---- Hook: passively captures the player's ASR timedtext response (document_start) ----
+  // Interception only — it reads a body the PLAYER fetched; it never fetches. It
+  // captures ONLY the auto-caption resource (request URL carries `kind=asr`), so
+  // `captured` holds just the single track we bind to — there is nothing else to
+  // sift through later (no manual/translated bodies, no re-judging which is asr).
   const captured = window.__YK_CAP__ || (window.__YK_CAP__ = new Map());
+
+  // The asr track's request is the only one we want, and it is precisely the one
+  // whose URL has the `kind=asr` param. Manual tracks carry `caps=asr` but never
+  // `kind=asr`, so this excludes them.
+  function isAsrTimedtextUrl(url) {
+    return (
+      typeof url === 'string' && url.includes('/api/timedtext') && /[?&]kind=asr(?:&|$)/.test(url)
+    );
+  }
 
   function installNetworkCapture() {
     if (window.__YK_NET__) return;
@@ -29,7 +66,7 @@
       const out = origFetch.apply(this, args);
       try {
         const url = typeof args[0] === 'string' ? args[0] : args[0]?.url;
-        if (url && url.includes('/api/timedtext')) {
+        if (isAsrTimedtextUrl(url)) {
           out
             .then((res) => res.clone().text())
             .then((t) => {
@@ -49,7 +86,7 @@
       return open.call(this, method, url, ...rest);
     };
     XMLHttpRequest.prototype.send = function (...args) {
-      if (this.__ykUrl && String(this.__ykUrl).includes('/api/timedtext')) {
+      if (isAsrTimedtextUrl(String(this.__ykUrl))) {
         this.addEventListener('load', () => {
           try {
             if (this.responseText) captured.set(String(this.__ykUrl), this.responseText);
@@ -80,6 +117,7 @@
       stage: 'idle',
       videoId: '',
       active: false,
+      captureTimer: 0,
     };
   }
 
@@ -134,32 +172,33 @@
     return !!player && player.classList.contains('ad-showing');
   }
 
-  // The auto-generated (ASR) caption track is a property of the video itself,
-  // derived from the video's speech. Select it purely from the video's caption
-  // tracklist — never from the user's current caption/UI/display settings.
+  // Identify the auto-generated (ASR) caption track for THIS video using only
+  // video-intrinsic data (kind === 'asr'), never the user's caption/UI settings.
+  // We NEVER guess: if there is no ASR track, or multiple ASR tracks that cannot
+  // be disambiguated down to exactly one, return null (not found). A wrong track
+  // would carry no/incorrect per-word timing, so the old fallbacks (asrTracks[0],
+  // name-matching, tracks[0]) are removed — not-found is an explicit outcome.
   function pickAutoCaptionTrack(tracks, tracklist) {
     if (!tracks?.length) return null;
     const asrTracks = tracks.filter((t) => t.kind === 'asr');
+    // Exactly one ASR track → unambiguous.
     if (asrTracks.length === 1) return asrTracks[0];
-    if (asrTracks.length > 1) {
-      // Multiple ASR tracks (rare): disambiguate with video-intrinsic data only,
-      // preferring the track tied to the video's default audio language.
-      const audioTracks = tracklist?.audioTracks;
-      const defAudioIdx = tracklist?.defaultAudioTrackIndex;
-      const defAudio = Number.isInteger(defAudioIdx) ? audioTracks?.[defAudioIdx] : undefined;
-      const audioCapIdx = defAudio?.captionTrackIndices?.[0];
-      const byAudio = Number.isInteger(audioCapIdx) ? tracks[audioCapIdx] : undefined;
-      const defCapIdx = tracklist?.defaultCaptionTrackIndex;
-      const byDefaultCap = Number.isInteger(defCapIdx) ? tracks[defCapIdx] : undefined;
-      const preferredLang = byAudio?.languageCode || byDefaultCap?.languageCode;
-      const byLang = preferredLang && asrTracks.find((t) => t.languageCode === preferredLang);
-      return byLang || asrTracks[0];
-    }
-    // No ASR track at all: fall back to a name match (still video data), then first.
-    return (
-      tracks.find((t) => /auto|自動|自动|生成|auto-generated/i.test(t.name?.simpleText || '')) ||
-      tracks[0]
-    );
+    // No ASR track → this video has no auto-caption to bind to. Not found.
+    if (asrTracks.length === 0) return null;
+    // Multiple ASR tracks (rare): the only video-intrinsic disambiguator is the
+    // video's default audio language. Accept it ONLY if it resolves to exactly
+    // one ASR track; anything else is genuinely ambiguous → not found.
+    const audioTracks = tracklist?.audioTracks;
+    const defAudioIdx = tracklist?.defaultAudioTrackIndex;
+    const defAudio = Number.isInteger(defAudioIdx) ? audioTracks?.[defAudioIdx] : undefined;
+    const audioCapIdx = defAudio?.captionTrackIndices?.[0];
+    const byAudio = Number.isInteger(audioCapIdx) ? tracks[audioCapIdx] : undefined;
+    const defCapIdx = tracklist?.defaultCaptionTrackIndex;
+    const byDefaultCap = Number.isInteger(defCapIdx) ? tracks[defCapIdx] : undefined;
+    const preferredLang = byAudio?.languageCode || byDefaultCap?.languageCode;
+    if (!preferredLang) return null;
+    const matches = asrTracks.filter((t) => t.languageCode === preferredLang);
+    return matches.length === 1 ? matches[0] : null;
   }
 
   function captionJsonFromText(text) {
@@ -172,93 +211,58 @@
     }
   }
 
-  function pickCapturedJson(track) {
+  // The asr track was already chosen by pickAutoCaptionTrack — that is the single
+  // judgment. The hook captured ONLY kind=asr bodies, so we do NOT re-judge which
+  // body is asr; we just locate the one for THIS track (current video, and the
+  // matching language if the video exposes several asr tracks) and ASSERT it is
+  // the expected per-word json3. Returns the json once captured, else null.
+  function capturedJsonForTrack(track) {
     const vid = currentVideoId();
-    let best = null;
-    let bestScore = -1;
     for (const [url, text] of captured) {
-      const json = captionJsonFromText(text);
-      if (!json) continue;
-      let lang = null;
-      let asr = false;
-      let json3 = false;
       let urlVid = null;
+      let lang = null;
       try {
         const u = new URL(url, location.origin);
-        lang = u.searchParams.get('lang');
-        asr = u.searchParams.get('kind') === 'asr' || u.searchParams.get('caps') === 'asr';
-        json3 = u.searchParams.get('fmt') === 'json3';
         urlVid = u.searchParams.get('v');
+        lang = u.searchParams.get('lang');
       } catch {
-        /* ignore */
+        continue;
       }
-      // Avoid mixing in another video's captured captions after SPA navigation.
-      if (vid && urlVid && urlVid !== vid) continue;
+      if (urlVid && urlVid !== vid) continue; // captured from another video (SPA nav)
       if (track.languageCode && lang && lang !== track.languageCode) continue;
-      const score = (asr ? 2 : 0) + (json3 ? 1 : 0);
-      if (score > bestScore) {
-        bestScore = score;
-        best = json;
+      const json = captionJsonFromText(text); // assert: the asr body must be json3 + events
+      if (!json) {
+        log.warn('captured asr body is not valid json3 (unexpected):', url);
+        continue;
       }
+      return json;
     }
-    return best;
+    return null;
   }
 
-  function enablePlayerCaptions(track) {
-    const player = document.querySelector('#movie_player');
-    if (!player?.setOption) return;
-    // Triggers the player to fetch the asr timedtext track. Audio is untouched.
-    player.setOption('captions', 'display', true);
-    if (track.languageCode) {
-      const payload = { languageCode: track.languageCode };
-      if (track.kind) payload.kind = track.kind;
-      player.setOption('captions', 'track', payload);
-    }
-  }
-
-  function waitForCapturedJson(track, timeoutMs = 12000) {
+  // Bind to the player's currently-selected auto-caption: wait until the player
+  // has fetched the asr track and our hook has captured its body. We never drive
+  // the player and we never fetch — the auto-caption is selected externally (by
+  // the user, or by automation/MCP). If it is never selected we simply stay idle
+  // (no overlay); that is the normal waiting state, NOT an error. Resolves with
+  // the json once captured, or null if this run is torn down (SPA navigation /
+  // toggle off) before it appears.
+  function waitForCapturedJson(track) {
     return new Promise((resolve) => {
-      const start = Date.now();
-      const id = setInterval(() => {
-        const json = pickCapturedJson(track);
-        if (json || Date.now() - start > timeoutMs || !state.active) {
-          clearInterval(id);
-          resolve(json || null);
+      const poll = () => {
+        if (!state.active) {
+          resolve(null);
+          return;
         }
-      }, 200);
+        const json = capturedJsonForTrack(track);
+        if (json) {
+          resolve(json);
+          return;
+        }
+        state.captureTimer = setTimeout(poll, 200);
+      };
+      poll();
     });
-  }
-
-  async function loadCaptionJsonFromUrl(url) {
-    const u = new URL(url, location.origin);
-    u.searchParams.set('fmt', 'json3');
-    const res = await fetch(u.toString(), { credentials: 'same-origin' });
-    if (!res.ok) throw new Error(`Caption fetch failed: ${res.status}`);
-    const text = await res.text();
-    if (!text.trim()) return null;
-    const json = JSON.parse(text);
-    if (!json?.events?.length) return null;
-    return json;
-  }
-
-  async function fetchCaptionJson(track) {
-    // Hooks already installed at top level; the first timedtext request is captured.
-    const already = pickCapturedJson(track);
-    if (already) return already;
-
-    if (track.baseUrl) {
-      const direct = await loadCaptionJsonFromUrl(track.baseUrl).catch(() => null);
-      if (direct) return direct;
-    }
-
-    // Captions were never requested by the player — enable the asr track to trigger a fetch.
-    enablePlayerCaptions(track);
-
-    const json = await waitForCapturedJson(track);
-    if (!json) {
-      throw new Error('No caption body captured (timedtext pot-gated; CC may be unavailable)');
-    }
-    return json;
   }
 
   function parseCaptionEvents(json) {
@@ -349,8 +353,11 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
-      .ytp-caption-window-container,
-      .caption-window.ytp-caption-window-bottom {
+      /* Hide the native caption ONLY while engaged (asr is the selected track and
+         we are showing karaoke). When the user picks another track / turns captions
+         off, we remove .yk-engaged so the native caption shows normally. */
+      .yk-engaged .ytp-caption-window-container,
+      .yk-engaged .caption-window.ytp-caption-window-bottom {
         opacity: 0 !important;
         pointer-events: none !important;
       }
@@ -510,10 +517,35 @@
     });
   }
 
-  // While an ad is showing, hide the overlay and drop any rendered line so no
-  // stale (or ad-derived) caption lingers. Keeps the rAF loop alive so normal
-  // rendering resumes automatically once the ad ends.
-  function hideOverlayForAd() {
+  // True only while the auto-caption (asr) track is the player's CURRENTLY
+  // displayed caption. When the user selects a different track (manual/translated)
+  // or turns captions off, getOption('captions','track') is a non-asr/empty object,
+  // so this is false → we must step aside and let the native caption show. If we
+  // know which asr language we bound to, also require the displayed asr track to
+  // match it (a video can expose several asr languages).
+  function isAsrTrackSelected() {
+    const player = getPlayerEl();
+    if (!player?.getOption) return false;
+    try {
+      const cur = player.getOption('captions', 'track');
+      if (cur?.kind !== 'asr') return false;
+      return !state.trackLang || !cur.languageCode || cur.languageCode === state.trackLang;
+    } catch {
+      return false;
+    }
+  }
+
+  // Engage: we own the caption area — hide the native caption (via .yk-engaged) so
+  // it does not show through behind the karaoke overlay.
+  function engage() {
+    getPlayerEl()?.classList.add('yk-engaged');
+  }
+
+  // Step aside: hand the caption area back to the player. Un-hide the native
+  // caption and clear our overlay so we NEVER leave a blank caption behind. Used
+  // while an ad plays, or whenever the selected caption is not the asr track.
+  function stepAside() {
+    getPlayerEl()?.classList.remove('yk-engaged');
     const root = document.getElementById(ROOT_ID);
     if (root) {
       root.dataset.hidden = 'true';
@@ -531,9 +563,13 @@
       return;
     }
     state.video = v;
-    if (isAdShowing()) {
-      hideOverlayForAd();
+    // Bind only while the asr track is the player's selected caption (and not
+    // during an ad); otherwise step aside so the user's chosen native caption
+    // shows — never override it with a stale/blank overlay.
+    if (isAdShowing() || !isAsrTrackSelected()) {
+      stepAside();
     } else {
+      engage();
       render(v.currentTime * 1000);
     }
     state.raf = requestAnimationFrame(tick);
@@ -577,6 +613,8 @@
   function teardown() {
     state.active = false;
     cancelAnimationFrame(state.raf);
+    clearTimeout(state.captureTimer);
+    getPlayerEl()?.classList.remove('yk-engaged'); // restore the native caption
     const root = document.getElementById(ROOT_ID);
     if (root) root.remove();
     const toggle = document.getElementById(TOGGLE_ID);
@@ -601,15 +639,17 @@
 
     state.stage = 'pick-track';
     const track = pickAutoCaptionTrack(tracks, tracklist);
-    if (!track) {
-      throw new Error(`No caption tracks available (tracks=${tracks?.length || 0})`);
-    }
+    // No caption track on this video → nothing to bind to. Stay idle; not an error.
+    if (!track) return;
     state.trackLang = track.languageCode || '';
-    console.info('[YT Karaoke] Using track:', track.name?.simpleText || state.trackLang, track.kind);
+    log.info('Binding to track:', track.name?.simpleText || state.trackLang, track.kind);
 
-    state.stage = 'fetch-caption';
-    const json = await fetchCaptionJson(track);
-    if (!state.active) return;
+    // Bind to the player's auto-caption: wait (passively, no timeout) until the
+    // selected asr track is captured by our hook. If it is never selected we stay
+    // idle here — that is the normal waiting state, not an error.
+    state.stage = 'await-caption';
+    const json = await waitForCapturedJson(track);
+    if (!json || !state.active) return;
 
     state.stage = 'parse';
     state.words = parseCaptionEvents(json);
@@ -644,7 +684,7 @@
         words: state.words.length,
         lines: state.lines.length,
       };
-      console.error('[YT Karaoke] failed at stage', state.stage, err);
+      log.error('failed at stage', state.stage, err);
       state.active = false;
     });
   }
