@@ -147,10 +147,14 @@
       #movie_player:hover #${TOGGLE_ID} { opacity: 0.85; }
       #${TOGGLE_ID}:hover { opacity: 1; }
       #${TOGGLE_ID}[data-on="false"] { color: rgba(255, 255, 255, 0.5); }
+      /* The 字幕全文 toggle is a child of the overlay root (the caption box), so it
+         is positioned RELATIVE to that box: just above its top-right corner, moving
+         with the caption. pointer-events:auto re-enables clicks (the root disables
+         them). It shares the root's opacity, so it fades with the caption. */
       #${TRANSCRIPT_BTN_ID} {
         position: absolute;
-        top: 44px;
-        right: 12px;
+        bottom: calc(100% + 6px);
+        right: 0;
         z-index: 66;
         padding: 4px 10px;
         border: none;
@@ -158,7 +162,9 @@
         background: rgba(8, 8, 8, 0.72);
         color: #fff;
         font: 600 12px/1.4 Roboto, Arial, sans-serif;
+        white-space: nowrap;
         cursor: pointer;
+        pointer-events: auto;
         opacity: 0;
         transition: opacity 0.15s ease;
       }

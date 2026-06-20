@@ -44,8 +44,8 @@ show — it never overrides another caption or leaves a blank one.
 
 ## Side transcript
 
-A **字幕全文** button (top-right of the player, below the Karaoke button) opens an
-expandable side panel with the **full caption transcript**. The line currently
+A **字幕全文** button (above the caption box, moving with it — revealed on hover)
+opens an expandable side panel with the **full caption transcript**. The line currently
 playing is highlighted and auto-scrolled into view, with its active word
 karaoke-highlighted as it's spoken. **Click any line to jump** the video to it.
 **Drag the panel's left edge to resize its width**; **double-click that edge to

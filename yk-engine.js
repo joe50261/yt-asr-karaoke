@@ -150,6 +150,9 @@
           engage();
           const ms = v.currentTime * 1000;
           overlay.render(state.bind, ms);
+          // The 字幕全文 toggle lives ON the caption box, so attach it only after
+          // overlay.render has created the root (idempotent; no-ops once present).
+          transcript.ensureToggle();
           // The side transcript follows the binding: single variant normally, or both
           // (original + translation, interleaved by time) when dual-track is on.
           transcript.sync(ms, state.bind);
@@ -161,7 +164,6 @@
         state.stage = 'styles';
         styles.inject();
         ensureToggle();
-        transcript.ensureToggle();
         state.videoId = yt.currentVideoId();
 
         state.stage = 'player-response';

@@ -17,7 +17,8 @@
 (function () {
   'use strict';
   window.__YK__.register('transcript', ['config', 'timing', 'yt'], (config, timing, yt) => {
-    const { TRANSCRIPT_ID, TRANSCRIPT_BTN_ID, TRANSCRIPT_OPEN_KEY, TRANSCRIPT_WIDTH_KEY } = config;
+    const { ROOT_ID, TRANSCRIPT_ID, TRANSCRIPT_BTN_ID, TRANSCRIPT_OPEN_KEY, TRANSCRIPT_WIDTH_KEY } =
+      config;
 
     let sig = null; // which variant(s) are built into the panel
     let byVariant = {}; // key -> [{ row, wordEls, line }] per line of that variant
@@ -53,8 +54,13 @@
 
     function ensureToggle() {
       if (document.getElementById(TRANSCRIPT_BTN_ID)) return;
-      const player = yt.getPlayerEl();
-      if (!player) return;
+      // Mount on the overlay root (the caption box) — like the overlay's resize grip,
+      // it's a root child with pointer-events:auto that survives the per-frame
+      // replaceChildren (render/clear only touch .yk-lines). So the button sticks to
+      // the caption box and moves with it. The root is created lazily once karaoke is
+      // showing, so the engine retries this each engaged frame until the host exists.
+      const host = document.getElementById(ROOT_ID);
+      if (!host) return;
       const btn = document.createElement('button');
       btn.id = TRANSCRIPT_BTN_ID;
       btn.type = 'button';
@@ -64,7 +70,7 @@
         e.preventDefault();
         setOpen(!isOpen());
       });
-      player.appendChild(btn);
+      host.appendChild(btn);
     }
 
     function ensurePanel() {
