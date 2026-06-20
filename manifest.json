@@ -21,7 +21,21 @@
   "content_scripts": [
     {
       "matches": ["https://www.youtube.com/*"],
-      "js": ["content.js"],
+      "js": [
+        "yk-di.js",
+        "yk-config.js",
+        "yk-log.js",
+        "yk-settings.js",
+        "yk-timing.js",
+        "yk-parse.js",
+        "yk-yt.js",
+        "yk-capture.js",
+        "yk-styles.js",
+        "yk-overlay.js",
+        "yk-transcript.js",
+        "yk-engine.js",
+        "yk-main.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN",
       "all_frames": false

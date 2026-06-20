@@ -111,18 +111,49 @@ and reload the YouTube tab.
 
 ## Files
 
-- `manifest.json` — MV3 manifest. `content.js` runs in the `MAIN` world at
-  `document_start`; `bridge.js` runs in the default (isolated) world. Requests
-  the `storage` permission (for popup settings); no host permissions.
-- `content.js` — the karaoke logic: passive hook/capture, current-track
-  detection, json3 parse + line grouping, overlay render (single or dual-track),
-  SPA re-init, on/off toggle. **No `innerHTML`** — YouTube enforces Trusted
-  Types, so DOM is built with `textContent`/`replaceChildren`.
+The karaoke logic is split into small **dependency-injected modules** (`yk-*.js`),
+wired by a tiny container (`window.__YK__`) so any one module can be hot-swapped at
+runtime — see *Architecture* below. They all run in the `MAIN` world at
+`document_start`, listed in the manifest in load order (`yk-di.js` first,
+`yk-main.js` last). **No `innerHTML` anywhere** — YouTube enforces Trusted Types, so
+DOM is built with `textContent` / `replaceChildren`.
+
+- `manifest.json` — MV3 manifest. The `yk-*.js` modules run in the `MAIN` world at
+  `document_start`; `bridge.js` runs in the default (isolated) world. Requests the
+  `storage` permission (for popup settings); no host permissions.
+- `yk-di.js` — the DI container: `register` / `resolve` / `start` / hot-swap.
+- `yk-config.js` — IDs, storage keys, timing constants, `CJK_RE`.
+- `yk-log.js` — tagged console logger.
+- `yk-settings.js` — live popup settings (relayed by `bridge.js`).
+- `yk-timing.js` — pure active-line / word-state mapping.
+- `yk-parse.js` — pure json3 → words → lines (no DOM, no state).
+- `yk-yt.js` — stateless adapter over YouTube's player + DOM.
+- `yk-capture.js` — passive `fetch`/XHR hook capturing the asr timedtext body.
+- `yk-styles.js` — injects the overlay + transcript CSS.
+- `yk-overlay.js` — the centered karaoke overlay (owns its render rows).
+- `yk-transcript.js` — the side transcript panel (owns its panel state).
+- `yk-engine.js` — lifecycle orchestrator: track pick, bind, render loop, SPA
+  re-init, on/off toggle.
+- `yk-main.js` — entry: installs the hook + boots the engine.
 - `bridge.js` — isolated-world relay: mirrors `chrome.storage` settings to the
-  MAIN-world `content.js` via `window.postMessage` (it has `chrome.*`; the MAIN
-  world does not).
+  MAIN-world modules via `window.postMessage` (it has `chrome.*`; the MAIN world
+  does not).
 - `popup.html` / `popup.js` — the settings popup.
+- `test/` — Node-only verification harness + dual-track timedtext fixtures.
 - `icons/` — 16/48/128 px icons.
+
+## Architecture (modules + hot-swap)
+
+Each `yk-*.js` registers a factory with the container; resolution is lazy and
+singleton. Modules talk only through injected dependencies, never via globals, and
+each is small enough to read/replace on its own. Modules that hold DOM, listeners,
+or timers expose a `dispose()`.
+
+Because the modules share the page's `window`, a module can be **swapped at runtime
+without reloading the extension**: re-evaluate an edited `yk-*.js` (e.g. via the
+DevTools console or CDP `Runtime.evaluate`) — its `register(...)` re-runs, the
+container disposes every live module that depends on it (dependents first) plus the
+module itself, then re-resolves and restarts the engine with the new factory.
 
 ## Notes
 

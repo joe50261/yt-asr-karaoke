@@ -1,0 +1,24 @@
+{
+  "videoId": "5ipNqGvS5Hw",
+  "title": "《星際大戰》風暴兵大全！40種風暴兵武器裝備、設計理念超詳細解說 Every Stormtrooper in Star Wars Explained｜科普長知識｜GQ Taiwan",
+  "capturedDate": "2026-06-20",
+  "source": "YouTube timedtext json3，由頁面內 hook player 的 fetch/XHR response 取得（非直接抓 baseUrl，baseUrl 缺 pot token 會回空 body）",
+  "sourceLang": "en",
+  "track": "asr (auto-generated)",
+  "clip": "影片前 ~90 秒（只保留 tStartMs <= 90000 的 events）",
+  "minified": "移除 acAsrConf 與 window 樣式欄位（pens/wsWinStyles/...）；保留 content.js 會 parse 的 tStartMs/dDurationMs/segs.utf8/tOffsetMs",
+  "files": {
+    "original": "5ipNqGvS5Hw.en.asr.json3.json",
+    "translation_zh_Hant": "5ipNqGvS5Hw.en-zh-Hant.asr.json3.json"
+  },
+  "stats": {
+    "origLines_N": 44,
+    "tlLines_M": 41,
+    "mergedAway": 3,
+    "origLinesWithTlMatch": 41,
+    "orphanOrigLines": 3,
+    "domRows": 85,
+    "adjVariantHits": 40,
+    "adjVariantIntraHits": 0
+  }
+}
