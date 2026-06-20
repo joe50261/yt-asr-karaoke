@@ -161,9 +161,27 @@
     function buildTranscript(entries) {
       const panel = ensurePanel();
       const body = panel.querySelector('.ykt-body');
-      const ordered = []; // { row, start } for time-interleaved DOM order
+      const ordered = []; // { row, anchor, rank, start } — interval-grouped DOM order
       const map = {};
-      entries.forEach((e) => {
+      // Group rows by the TRANSLATION's intervals, not by raw start. The auto-translation
+      // merges several original lines into one (M<N), so an original whose text was merged
+      // away ("orphan") has its start land INSIDE a translation's span — sorting by start
+      // alone drops it AFTER that translation (whose end overruns it), giving o,T,o instead
+      // of o,o,T. Anchor every row to the translation interval its start falls into (largest
+      // translation start ≤ row start), so each orphan sorts with its sentence's originals,
+      // ahead of the translation. Translation spans OVERLAP (so a translation's own end is
+      // unusable as a key) but translation STARTS are monotonic — safe interval boundaries.
+      const tlEntry = entries.find((e) => e.key); // the translation variant (dual-track only)
+      const tlStarts = tlEntry ? tlEntry.lines.map((l) => l.start) : []; // monotonic
+      const groupAnchor = (start) => {
+        let lo = 0, hi = tlStarts.length - 1, ans = -1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (tlStarts[mid] <= start) { ans = tlStarts[mid]; lo = mid + 1; } else hi = mid - 1;
+        }
+        return ans;
+      };
+      entries.forEach((e, rank) => {
         map[e.key] = e.lines.map((line) => {
           const row = document.createElement('div');
           row.className = 'ykt-line';
@@ -188,11 +206,13 @@
             const v = yt.getVideo();
             if (v) v.currentTime = line.start / 1000 + 0.01;
           });
-          ordered.push({ row, start: line.start });
+          ordered.push({ row, anchor: groupAnchor(line.start), rank, start: line.start });
           return { row, wordEls, line };
         });
       });
-      ordered.sort((a, b) => a.start - b.start);
+      // anchor = translation interval; rank = entry order (original above translation, or
+      // reversed under translationOnTop); start = order within a group.
+      ordered.sort((a, b) => a.anchor - b.anchor || a.rank - b.rank || a.start - b.start);
       body.replaceChildren(...ordered.map((x) => x.row));
       return map;
     }
