@@ -23,6 +23,16 @@
     let byVariant = {}; // key -> [{ row, wordEls, line }] per line of that variant
     let active = []; // currently-highlighted row entries (1, or 2 in dual-track)
 
+    // ms -> clock label (m:ss, or h:mm:ss past the hour). Display-only.
+    function fmtTime(ms) {
+      const total = Math.max(0, Math.round(ms / 1000));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      const mm = h ? String(m).padStart(2, '0') : String(m);
+      return `${h ? `${h}:` : ''}${mm}:${String(s).padStart(2, '0')}`;
+    }
+
     function isOpen() {
       try {
         return localStorage.getItem(TRANSCRIPT_OPEN_KEY) === 'true';
@@ -158,13 +168,22 @@
           const row = document.createElement('div');
           row.className = 'ykt-line';
           if (e.key) row.dataset.variant = e.key; // translation rows (indented/muted)
+          // start~end label, then the words in their own box so wrapped lines hang
+          // under the text column (not under the timestamp).
+          const time = document.createElement('span');
+          time.className = 'ykt-time';
+          time.textContent = `${fmtTime(line.start)}~${fmtTime(line.end)}`;
+          const text = document.createElement('span');
+          text.className = 'ykt-text';
           const wordEls = line.words.map((w) => {
             const span = document.createElement('span');
             span.className = 'ykt-w ykt-w--future';
             span.textContent = w.text;
-            row.appendChild(span);
+            text.appendChild(span);
             return span;
           });
+          row.appendChild(time);
+          row.appendChild(text);
           row.addEventListener('click', () => {
             const v = yt.getVideo();
             if (v) v.currentTime = line.start / 1000 + 0.01;

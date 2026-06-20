@@ -241,11 +241,26 @@
         overscroll-behavior: contain;
       }
       #${TRANSCRIPT_ID} .ykt-line {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
         padding: 6px 14px;
         cursor: pointer;
         color: var(--ykt-line);
         border-left: 3px solid transparent;
       }
+      /* start~end timestamp column. tabular-nums keeps same-format rows aligned;
+         it keeps its muted colour even when the line is active (stays subtle). */
+      #${TRANSCRIPT_ID} .ykt-time {
+        flex: 0 0 auto;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        color: var(--ykt-muted);
+        opacity: 0.75;
+        white-space: nowrap;
+        user-select: none;
+      }
+      #${TRANSCRIPT_ID} .ykt-text { flex: 1 1 auto; min-width: 0; }
       #${TRANSCRIPT_ID} .ykt-line:hover { background: var(--ykt-hover); }
       #${TRANSCRIPT_ID} .ykt-line[data-active="true"] {
         background: var(--ykt-active-bg);
