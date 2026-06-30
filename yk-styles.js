@@ -7,7 +7,7 @@
 (function () {
   'use strict';
   window.__YK__.register('styles', ['config'], (config) => {
-    const { STYLE_ID, ROOT_ID, TOGGLE_ID, TRANSCRIPT_ID, TRANSCRIPT_BTN_ID, ENGAGED_CLASS } =
+    const { STYLE_ID, ROOT_ID, TOGGLE_ID, TRANSCRIPT_ID, TRANSCRIPT_BTN_ID, PANEL_ID, PANEL_BTN_ID, ENGAGED_CLASS } =
       config;
 
     function inject() {
@@ -89,7 +89,7 @@
         display: inline-block;
       }
 
-      /* ---- Caption style presets (popup: 預設 / YT / 進階). The rules above are
+      /* ---- Caption style presets (settings menu: 預設 / YT / 進階). The rules above are
          the DEFAULT look; data-style on the overlay root switches it live. ---- */
       /* YT: match YouTube's native caption — weight 400, white, near-square, no
          glow/scale; the active word is a flat gold (no flourish). */
@@ -299,6 +299,133 @@
         z-index: 1;
       }
       #${TRANSCRIPT_ID} .ykt-resizer:hover { background: var(--ykt-grip-hover); }
+
+      /* ---- ⚙ Settings menu (yk-panel). The button sits just below the Karaoke toggle
+         (same dark pill + hover-reveal); the card is themed like the transcript so it
+         follows YouTube's light/dark. Both are player children → absolute, so they live
+         inside the player and show in fullscreen too. ---- */
+      #${PANEL_BTN_ID} {
+        position: absolute;
+        top: 44px;
+        right: 12px;
+        z-index: 66;
+        width: 28px;
+        height: 24px;
+        padding: 0;
+        border: none;
+        border-radius: 4px;
+        background: rgba(8, 8, 8, 0.72);
+        color: #fff;
+        font: 600 14px/1 Roboto, Arial, sans-serif;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.15s ease;
+      }
+      .html5-video-player:hover #${PANEL_BTN_ID},
+      #movie_player:hover #${PANEL_BTN_ID} { opacity: 0.85; }
+      #${PANEL_BTN_ID}:hover { opacity: 1; }
+      #${PANEL_ID} {
+        --ykp-bg: rgba(255, 255, 255, 0.98);
+        --ykp-fg: #0f0f0f;
+        --ykp-muted: #606060;
+        --ykp-border: #e5e5e5;
+        --ykp-accent: #065fd4;
+        --ykp-ctrl-border: #ccc;
+        --ykp-off: #ccc;
+        --ykp-shadow: rgba(0, 0, 0, 0.28);
+        position: absolute;
+        top: 76px;
+        right: 12px;
+        z-index: 67;
+        width: 290px;
+        max-width: 86%;
+        display: none;
+        flex-direction: column;
+        background: var(--ykp-bg);
+        color: var(--ykp-fg);
+        border-radius: 10px;
+        box-shadow: 0 6px 24px var(--ykp-shadow);
+        font: 13px/1.45 "YouTube Noto", Roboto, Arial, sans-serif;
+        overflow: hidden;
+      }
+      #${PANEL_ID}[data-open="true"] { display: flex; }
+      html[dark] #${PANEL_ID} {
+        --ykp-bg: rgba(24, 24, 24, 0.98);
+        --ykp-fg: #f1f1f1;
+        --ykp-muted: #aaaaaa;
+        --ykp-border: #383838;
+        --ykp-accent: #3ea6ff;
+        --ykp-ctrl-border: #555555;
+        --ykp-off: #555555;
+        --ykp-shadow: rgba(0, 0, 0, 0.6);
+      }
+      #${PANEL_ID} .ykp-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 9px 12px;
+        border-bottom: 1px solid var(--ykp-border);
+        font-weight: 700;
+      }
+      #${PANEL_ID} .ykp-close {
+        border: none;
+        background: none;
+        cursor: pointer;
+        font-size: 18px;
+        line-height: 1;
+        color: var(--ykp-muted);
+      }
+      #${PANEL_ID} .ykp-body { padding: 4px 12px 10px; }
+      #${PANEL_ID} .ykp-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 8px 0;
+        border-top: 1px solid var(--ykp-border);
+      }
+      #${PANEL_ID} .ykp-row:first-child { border-top: none; }
+      #${PANEL_ID} .ykp-row label { font-weight: 600; flex: 1 1 auto; min-width: 0; }
+      #${PANEL_ID} .ykp-desc {
+        display: block;
+        font-weight: 400;
+        color: var(--ykp-muted);
+        font-size: 11px;
+        margin-top: 2px;
+      }
+      #${PANEL_ID} .ykp-select {
+        flex: 0 0 auto;
+        padding: 5px 8px;
+        border: 1px solid var(--ykp-ctrl-border);
+        border-radius: 6px;
+        font: inherit;
+        background: var(--ykp-bg);
+        color: var(--ykp-fg);
+        cursor: pointer;
+      }
+      #${PANEL_ID} .ykp-switch { position: relative; width: 38px; height: 22px; flex: 0 0 auto; }
+      #${PANEL_ID} .ykp-switch input { opacity: 0; width: 0; height: 0; }
+      #${PANEL_ID} .ykp-slider {
+        position: absolute;
+        inset: 0;
+        background: var(--ykp-off);
+        border-radius: 22px;
+        transition: 0.15s;
+        cursor: pointer;
+      }
+      #${PANEL_ID} .ykp-slider::before {
+        content: '';
+        position: absolute;
+        height: 16px;
+        width: 16px;
+        left: 3px;
+        top: 3px;
+        background: #fff;
+        border-radius: 50%;
+        transition: 0.15s;
+      }
+      #${PANEL_ID} .ykp-switch input:checked + .ykp-slider { background: var(--ykp-accent); }
+      #${PANEL_ID} .ykp-switch input:checked + .ykp-slider::before { transform: translateX(16px); }
     `;
       document.head.appendChild(style);
     }

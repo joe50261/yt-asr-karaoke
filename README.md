@@ -9,7 +9,7 @@ a **bilingual dual-track** view.
 ## How it works (the short version)
 
 The extension is a **passive binding** to whatever auto-caption the player is
-currently displaying — it never fetches captions and never drives the player:
+currently displaying — it never fetches captions itself:
 
 - **player** — YouTube's player is the only thing that can *fetch* a caption
   track; its requests carry a `pot` (proof-of-origin) token. A direct fetch of
@@ -20,8 +20,12 @@ currently displaying — it never fetches captions and never drives the player:
 - **us** — we read the player's currently selected track, find the matching
   captured body, parse its json3, and render the karaoke overlay.
 
-Because of this, **you select the auto-caption yourself** (it's the player's own
-caption, not something we force on). See *Using it* below.
+By default **you select the auto-caption yourself** (it's the player's own
+caption, not something we force on). The one exception is the opt-in **Auto
+dual-track** option: when you pick a target language, the engine uses the
+player's *own* `setOption` API to select the original asr then its translation —
+so the **player** still does the fetching (with its `pot` token) and the hook
+still only captures. We never issue a raw caption fetch. See *Using it* below.
 
 ## Using it
 
@@ -58,11 +62,15 @@ active line. The panel stays in sync with playback, hides when the extension ste
 aside, and remembers its open/closed state and width. It **follows YouTube's own
 light/dark theme** (keyed off `<html dark>`), so it matches the page in either mode.
 
-## Popup options
+## Settings menu (in-page)
 
-Click the toolbar icon:
+Click the **⚙ button on the player** (just below **Karaoke: ON/OFF**) to open the
+settings card. It lives **on the page**, not in the toolbar popup, so the controls are
+real player DOM (automation/MCP can drive them) and the menu works in fullscreen. The
+card follows YouTube's light/dark theme. Changes apply live and persist across reloads
+(written through `bridge.js` to `chrome.storage`).
 
-- **Caption style** — the overlay's look, applied live:
+- **字幕樣式 (Caption style)** — the overlay's look, applied live:
   - `預設` (default) — gold active word with a soft glow and a slight pop.
   - `YT` — matches YouTube's native caption (weight 400, white, near-square box);
     the active word is a flat gold, no flourish.
@@ -75,7 +83,27 @@ Click the toolbar icon:
   interleaved in the transcript. Each row is timed to its own track and follows
   that track's line structure, so the two stay roughly in step. Needs both bodies
   loaded: select `自動產生` once, then `自動翻譯` (selecting a translation
-  directly never loads the original — it then shows just the one available).
+  directly never loads the original — it then shows just the one available), or
+  just use **Auto-translate** below to load it for you.
+- **Auto-translate 自動翻譯** — the auto-**DRIVE** target. It is fully **orthogonal** to
+  the **Bilingual (dual-track)** toggle above: this menu only controls *which caption the
+  player shows* (the drive); **Bilingual** only controls *single vs. dual rows* (the
+  display). Pick a target language and the engine drives the player **once** (via its own
+  `setOption` API) to the original asr then its auto-translation to that language — no
+  manual `自動產生`/`自動翻譯` steps, gated on the bodies actually being captured (no timers)
+  — then **stands down** (no polling/overriding). It re-drives when you switch to a
+  different language or after the caption drifts off (YouTube reverting a caption, an ad).
+  Switching back to `關閉` just **stops auto-driving** and does **nothing else** (it never
+  touches **Bilingual** or collapses the display). Because the two are orthogonal, every
+  combination is valid — e.g. `(中文, Bilingual off)` auto-loads the Chinese translation
+  and shows it **single-track**; `(中文, Bilingual on)` shows the bilingual dual-track.
+  The menu itself is **built from the player's own runtime `translationLanguages`**, read
+  live from `yt` each time the card opens, so it only ever lists languages YouTube actually
+  provides; a saved target that is no longer offered simply falls back to `關閉`. The menu
+  holds **no language list of its own** (before the player has loaded captions it shows just
+  `關閉`; reopening it once captions load fills the list). Driving also runtime-asserts the
+  target: `yk-yt.selectAsrVariant` refuses a code the player doesn't actually offer rather
+  than fabricating one.
 - **Translation on top** — in dual-track, stack the translation above the
   original instead of below. Applies to both the overlay and the side transcript
   (they follow the same row order).
@@ -90,8 +118,9 @@ nothing gets chopped mid-phrase. The only fallback is for captions that carry no
 
 ## What it does NOT do
 
-- Does **not** fetch captions (it can't — `timedtext` is `pot`-gated) and does
-  **not** drive/auto-switch the player's caption selection.
+- Does **not** fetch captions (it can't — `timedtext` is `pot`-gated). It only
+  drives the player's caption selection when you opt in via **Auto-translate**,
+  and even then only through the player's own `setOption` API (never a raw fetch).
 - Does **not** mute the video, change audio, or affect autoplay-next.
 - Does **not** simulate or interpolate word timing — highlighting uses only the
   caption data's real `tOffsetMs`. Some videos' auto-captions are line-level only
@@ -120,25 +149,33 @@ DOM is built with `textContent` / `replaceChildren`.
 
 - `manifest.json` — MV3 manifest. The `yk-*.js` modules run in the `MAIN` world at
   `document_start`; `bridge.js` runs in the default (isolated) world. Requests the
-  `storage` permission (for popup settings); no host permissions.
+  `storage` permission (for settings persistence); no host permissions.
 - `yk-di.js` — the DI container: `register` / `resolve` / `start` / hot-swap.
 - `yk-config.js` — IDs, storage keys, timing constants, `CJK_RE`.
 - `yk-log.js` — tagged console logger.
-- `yk-settings.js` — live popup settings (relayed by `bridge.js`).
+- `yk-settings.js` — the settings hub: holds live `current`, relayed in by `bridge.js`;
+  its `apply()` is the one write path (mutate `current` + relay out for persistence).
 - `yk-timing.js` — pure active-line / word-state mapping.
 - `yk-parse.js` — pure json3 → words → lines (no DOM, no state).
 - `yk-yt.js` — stateless adapter over YouTube's player + DOM.
 - `yk-capture.js` — passive `fetch`/XHR hook capturing the asr timedtext body.
-- `yk-styles.js` — injects the overlay + transcript CSS.
+- `yk-styles.js` — injects the overlay + transcript + settings-menu CSS.
 - `yk-overlay.js` — the centered karaoke overlay (owns its render rows).
 - `yk-transcript.js` — the side transcript panel (owns its panel state).
+- `yk-panel.js` — the **in-page settings menu** (the ⚙ button + card on the player) as
+  its own hot-swappable module. A pure view: reads `settings.current` to reflect the
+  controls, writes only via `settings.apply()`, and builds its Auto-translate list live
+  from `yt.translationLanguages()`. Replaces the old toolbar popup.
+- `yk-autodrive.js` — the **auto-translate** (auto-drive) feature as its own module
+  (owns its drive latch); the engine calls its `drive()` each tick. Kept separate so the
+  feature can be hot-swapped on its own — one feature, one independently-swappable unit.
 - `yk-engine.js` — lifecycle orchestrator: track pick, bind, render loop, SPA
   re-init, on/off toggle.
 - `yk-main.js` — entry: installs the hook + boots the engine.
 - `bridge.js` — isolated-world relay: mirrors `chrome.storage` settings to the
   MAIN-world modules via `window.postMessage` (it has `chrome.*`; the MAIN world
-  does not).
-- `popup.html` / `popup.js` — the settings popup.
+  does not), and persists settings the other way — the in-page menu's `apply()` posts
+  a patch which `bridge.js` writes to `chrome.storage` (whose `onChanged` echoes it back).
 - `test/` — Node-only verification harness + dual-track timedtext fixtures.
 - `icons/` — 16/48/128 px icons.
 
@@ -160,4 +197,4 @@ module itself, then re-resolves and restarts the engine with the new factory.
 - No host permissions are requested; the content script only touches the
   `www.youtube.com` page it is injected into.
 - Adapted from the project's `karaoke.js`, with early hook installation, SPA
-  lifecycle handling, translation/dual-track binding, and the settings popup.
+  lifecycle handling, translation/dual-track binding, and the in-page settings menu.

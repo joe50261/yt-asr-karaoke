@@ -12,6 +12,8 @@
     TOGGLE_ID: 'yt-karaoke-toggle',
     TRANSCRIPT_ID: 'yt-karaoke-transcript',
     TRANSCRIPT_BTN_ID: 'yt-karaoke-transcript-btn',
+    PANEL_ID: 'yt-karaoke-panel',
+    PANEL_BTN_ID: 'yt-karaoke-panel-btn',
     ENABLED_KEY: 'yt-karaoke-enabled',
     TRANSCRIPT_OPEN_KEY: 'yt-karaoke-transcript-open',
     TRANSCRIPT_WIDTH_KEY: 'yt-karaoke-transcript-width',

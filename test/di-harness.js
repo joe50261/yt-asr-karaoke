@@ -1,5 +1,8 @@
 /**
- * DI 重構驗證 harness（Node，唯讀，非 ship 檔）。三部分：
+ * DI 驗證 harness（Node，唯讀，非 ship 檔）。
+ * 只保留「形狀鎖」(A–C)：resolve / 熱抽換順序 / parse 等價，infra、不具功能意義。
+ * 功能驗證（settings.apply、yk-panel 投影/寫入、yk-yt runtime assert）已遷到 Jest
+ * (`test/unit/feature.test.js`，注入 mock 隔離測)，本檔不再重證（避免重複）。
  *  A) 容器熱抽換的 dispose 順序（依賴者先）+ 重啟
  *  B) 13 模組全部 resolve、無循環/缺漏 dep
  *  C) 新 parse vs git HEAD 舊 content.js 在真實 fixtures 上逐行相同
@@ -53,8 +56,8 @@ function load(sandbox, files) {
   }
 }
 
-const MODULES = ['yk-config.js','yk-log.js','yk-settings.js','yk-timing.js','yk-parse.js','yk-yt.js','yk-capture.js','yk-styles.js','yk-overlay.js','yk-transcript.js','yk-engine.js'];
-const NAMES = ['config','log','settings','timing','parse','yt','capture','styles','overlay','transcript','engine'];
+const MODULES = ['yk-config.js','yk-log.js','yk-settings.js','yk-timing.js','yk-parse.js','yk-yt.js','yk-capture.js','yk-styles.js','yk-overlay.js','yk-transcript.js','yk-panel.js','yk-autodrive.js','yk-engine.js'];
+const NAMES = ['config','log','settings','timing','parse','yt','capture','styles','overlay','transcript','panel','autodrive','engine'];
 
 // ---------- A) 容器熱抽換 ----------
 (function partA() {
@@ -145,6 +148,7 @@ let realParse = null;
     ok(a.length === expectN, file + ': line count = ' + a.length + ' (baseline ' + expectN + ' from _analyze.py)');
   }
 })();
+
 
 console.log('\n' + (failed ? 'FAILED ' + failed : 'ALL PASS'));
 process.exit(failed ? 1 : 0);

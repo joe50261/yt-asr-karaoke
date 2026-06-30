@@ -76,6 +76,30 @@
       return matches.length === 1 ? matches[0] : null;
     }
 
+    // The auto-translation languages YouTube offers for THIS player, normalized to
+    // [{ code, name }]. This is YouTube's own runtime list (≈156, localized); the in-page
+    // settings menu (yk-panel) reads it live to build its Auto-translate menu, so the menu
+    // can never offer a code the player won't actually fetch. [] when the captions API
+    // isn't ready (the menu then shows 關閉 only until captions load).
+    function translationLanguages() {
+      const player = getPlayerEl();
+      if (!player?.getOption) return [];
+      let tls;
+      try {
+        tls = player.getOption('captions', 'translationLanguages');
+      } catch {
+        return [];
+      }
+      if (!Array.isArray(tls)) return [];
+      return tls
+        .map((l) => ({
+          code: l.languageCode,
+          // languageName is a plain localized string (NOT { simpleText }).
+          name: typeof l.languageName === 'string' ? l.languageName : l.languageCode,
+        }))
+        .filter((l) => l.code);
+    }
+
     // The asr caption variant the player CURRENTLY displays: { tlang } where tlang is
     // the auto-translation target ('' = original asr). Returns null when the player's
     // selected caption is NOT our asr track — a manual/translated-of-manual track, a
@@ -93,6 +117,52 @@
       if (cur?.kind !== 'asr') return null;
       if (trackLang && cur.languageCode && cur.languageCode !== trackLang) return null;
       return { tlang: cur.translationLanguage?.languageCode || '' };
+    }
+
+    // Drive the player to display ONE asr variant: tlang === '' selects the original
+    // auto-caption; otherwise its auto-translation to `tlang`. setOption makes the
+    // PLAYER fetch the body (its request carries the pot token) — we never fetch; the
+    // capture hook grabs whatever the player fetched. This is a SINGLE step with no
+    // timing: the engine sequences original-then-translation, gating each call on the
+    // previous body actually being captured (see engine.maybeAutoDrive), so there is
+    // no guessed delay. Returns false when the player's caption API or the asr track
+    // isn't available yet (caller retries next tick); true once setOption succeeded.
+    function selectAsrVariant(track, tlang) {
+      const player = getPlayerEl();
+      if (!player?.setOption || !player?.getOption) return false;
+      let asr;
+      try {
+        const list = player.getOption('captions', 'tracklist', { includeAsr: true });
+        asr = list?.find?.(
+          (t) => t.kind === 'asr' && (!track?.languageCode || t.languageCode === track.languageCode),
+        );
+      } catch {
+        return false;
+      }
+      if (!asr) return false;
+      let opt = asr;
+      if (tlang) {
+        // Runtime assert: only drive to a translation YouTube actually offers, using the
+        // player's REAL translationLanguage object (never a fabricated one). Refuse —
+        // return false so the caller retries / stands down — when tlang isn't a real
+        // option (invalid/stale target, or the list isn't loaded yet), so a bogus code
+        // can never force a fetch for a language that doesn't exist.
+        let tl;
+        try {
+          const tls = player.getOption('captions', 'translationLanguages');
+          tl = Array.isArray(tls) ? tls.find((l) => l.languageCode === tlang) : null;
+        } catch {
+          return false;
+        }
+        if (!tl) return false;
+        opt = { ...asr, translationLanguage: tl };
+      }
+      try {
+        player.setOption('captions', 'track', opt);
+      } catch {
+        return false;
+      }
+      return true;
     }
 
     function waitForVideo(isActive) {
@@ -140,6 +210,8 @@
       isAdShowing,
       pickAutoCaptionTrack,
       currentAsrSelection,
+      selectAsrVariant,
+      translationLanguages,
       waitForVideo,
       waitForPlayerResponse,
     };

@@ -1,0 +1,19 @@
+{
+  "name": "youtube-caption-karaoke",
+  "version": "1.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "YouTube auto-caption karaoke overlay with real per-word highlighting (MV3 extension)",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "npm run test:unit",
+    "test:unit": "jest",
+    "test:unit:legacy": "node test/di-harness.js",
+    "test:e2e-a": "playwright test",
+    "e2e-b:runbook": "echo 'e2e-b = real YouTube via MCP/CDP — see test/e2e-b/RUNBOOK.md (not an auto-run suite)'"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "jest": "^29.7.0"
+  }
+}

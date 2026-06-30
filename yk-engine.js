@@ -15,8 +15,8 @@
   'use strict';
   window.__YK__.register(
     'engine',
-    ['config', 'log', 'settings', 'yt', 'capture', 'parse', 'styles', 'overlay', 'transcript'],
-    (config, log, settings, yt, capture, parse, styles, overlay, transcript) => {
+    ['config', 'log', 'settings', 'yt', 'capture', 'parse', 'styles', 'overlay', 'transcript', 'autodrive', 'panel'],
+    (config, log, settings, yt, capture, parse, styles, overlay, transcript, autodrive, panel) => {
       const { TOGGLE_ID, ENABLED_KEY, ENGAGED_CLASS } = config;
 
       let state = freshLifecycle();
@@ -87,9 +87,14 @@
         const sel = yt.currentAsrSelection(state.trackLang);
         if (!sel) return false;
         // In dual-track, order the stacked rows: original-then-translation by default,
-        // or translation-then-original when translationOnTop is set.
+        // or translation-then-original when translationOnTop is set. The dual DISPLAY is
+        // owned solely by dualTrack — NOT by autoDualLang. autoDualLang only auto-STARTS
+        // (drives the player); dualTrack is independent (the user sets it in the menu).
+        // Turning autoDualLang back to 關閉 must do NOTHING to the display, so the display
+        // must not depend on it (else it would actively collapse dual→single on off, wrong).
         const pair = settings.current.translationOnTop ? [sel.tlang, ''] : ['', sel.tlang];
-        const wantKeys = settings.current.dualTrack && sel.tlang ? pair : [sel.tlang];
+        const dual = settings.current.dualTrack;
+        const wantKeys = dual && sel.tlang ? pair : [sel.tlang];
         const sig = wantKeys.join('|');
         if (sig !== state.bindSig) {
           state.bindSig = sig;
@@ -141,6 +146,9 @@
           return;
         }
         state.video = v;
+        // Auto-translate (the auto-drive) lives in its own module (yk-autodrive) so it can
+        // be hot-swapped on its own; the engine just feeds it the picked asr track each tick.
+        autodrive.drive(state.track, state.trackLang);
         // Show karaoke only while the player's selected caption is our asr track (or a
         // translation of it) AND that variant's body is captured. Otherwise step aside
         // so the user's chosen native caption shows — never override it or leave blank.
@@ -164,6 +172,7 @@
         state.stage = 'styles';
         styles.inject();
         ensureToggle();
+        panel.ensureButton(); // the ⚙ settings menu shares the toggle's lifetime/hover-reveal
         state.videoId = yt.currentVideoId();
 
         state.stage = 'player-response';
@@ -197,6 +206,7 @@
           // Still show the toggle so the user can turn it back on.
           styles.inject();
           ensureToggle();
+          panel.ensureButton();
           return;
         }
         if (state.active && state.videoId === yt.currentVideoId()) return;
@@ -218,6 +228,11 @@
         state.active = false;
         cancelAnimationFrame(state.raf);
         yt.getPlayerEl()?.classList.remove(ENGAGED_CLASS); // restore the native caption
+        // NOTE: if auto-translate drove the player onto an asr translation (yk-autodrive
+        // → yt.selectAsrVariant), we deliberately do NOT revert that caption selection here.
+        // "We stand down; the user owns the player" — reverting would itself be an override.
+        // So this one player-side mutation is intentionally left in place (like __YK_CAP__'s
+        // persistence, yk-capture.js), and is the one global side effect dispose does not unwind.
         transcript.reset();
         overlay.remove();
         const toggle = document.getElementById(TOGGLE_ID);

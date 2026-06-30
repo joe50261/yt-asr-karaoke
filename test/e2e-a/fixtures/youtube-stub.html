@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>YouTube watch (stub for e2e-a)</title>
+<!-- 控制夾具：餵一個最小的 #movie_player，暴露 auto-translate 需要的 player API。
+     讓真擴充的 content scripts 注入後，yk-yt/yk-panel 能讀到確定性的 translationLanguages。 -->
+<div id="movie_player"></div>
+<video class="html5-main-video"></video>
+<script>
+  const player = document.getElementById('movie_player');
+  const TLS = [
+    { languageCode: 'zh-Hant', languageName: '中文（繁體）' },
+    { languageCode: 'ja', languageName: '日文' },
+  ];
+  const ASR = { kind: 'asr', languageCode: 'en' };
+  player.getOption = (mod, key) => {
+    if (key === 'translationLanguages') return TLS;
+    if (key === 'tracklist') return [ASR];
+    if (key === 'track') return null;
+    return null;
+  };
+  player.setOption = () => {};
+  player.getPlayerResponse = () => ({
+    captions: { playerCaptionsTracklistRenderer: { captionTracks: [ASR] } },
+  });
+  window.ytInitialPlayerResponse = player.getPlayerResponse();
+</script>
