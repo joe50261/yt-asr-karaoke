@@ -171,6 +171,19 @@
       .html5-video-player:hover #${TRANSCRIPT_BTN_ID},
       #movie_player:hover #${TRANSCRIPT_BTN_ID} { opacity: 0.85; }
       #${TRANSCRIPT_BTN_ID}:hover { opacity: 1; }
+      /* Native playback mode: there is no overlay caption box to anchor to (YouTube draws
+         the caption), so the 字幕全文 button lives on the player chrome instead — third slot
+         in OUR top-right column (Karaoke 12px, ⚙ 44px, this 76px). Top-left is off limits:
+         that corner is YouTube's own (fullscreen title/avatar in .ytp-chrome-top, the paid
+         promotion label), hover-revealed at the same time as this pill would be. The open
+         ⚙ card (top:76, z-index 67 > 66) covers the pill while open — acceptable transient
+         occlusion. The base rule above still supplies the pill look + hover-reveal (the
+         reveal selectors key on the player, not the box). */
+      #${TRANSCRIPT_BTN_ID}[data-host="player"] {
+        bottom: auto;
+        right: 12px;
+        top: 76px;
+      }
       #${TRANSCRIPT_ID} {
         /* Theme tokens — light defaults; the html[dark] block below swaps them so
            the panel follows YouTube's own theme (YT sets <html dark> live). */

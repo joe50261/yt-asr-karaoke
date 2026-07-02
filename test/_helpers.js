@@ -90,6 +90,9 @@ function makeDom() {
       },
       get id() { return this._id; },
       set id(v) { this._id = v; if (v) byId.set(v, node); },
+      // 與真 DOM 對齊：模組碼用 parentElement 做守門（yk-transcript 的 re-home 判斷），
+      // 假 DOM 少了它會讓該守門「恆真」，守門被拔掉測試也照綠（無鑑別力）。
+      get parentElement() { return this.parent; },
       // A <select> only accepts a value that matches one of its <option>s (else it lands
       // on the empty/first — that IS the panel's "stale target → 關閉" fallback). Other
       // elements (input, option) store the value verbatim.
@@ -107,7 +110,17 @@ function makeDom() {
       removeAttribute(k) { delete this._attrs[k]; },
       addEventListener(t, fn) { (this._listeners[t] = this._listeners[t] || []).push(fn); },
       removeEventListener() {},
-      appendChild(c) { c.parent = node; node.children.push(c); return c; },
+      appendChild(c) {
+        // 與真 DOM 對齊：appendChild 會先把節點從舊 parent 摘下（「搬移」而非複製）——
+        // 少了這步，「same node, moved」類斷言驗不到舊 host 已不含該節點。
+        if (c.parent) {
+          const i = c.parent.children.indexOf(c);
+          if (i >= 0) c.parent.children.splice(i, 1);
+        }
+        c.parent = node;
+        node.children.push(c);
+        return c;
+      },
       append(...cs) { cs.forEach((c) => node.appendChild(c)); },
       replaceChildren(...cs) { node.children = []; cs.forEach((c) => node.appendChild(c)); },
       remove() {
@@ -149,4 +162,51 @@ function makeDom() {
   return { document, el };
 }
 
-module.exports = { EXT, FIX, makeSandbox, load, makeDom };
+// A FUNCTIONAL fake XMLHttpRequest with REAL responseText/response getters on its prototype
+// (the makeSandbox stub has none) so yk-capture's transform seam — which snapshots the native
+// prototype getter and shadows it per-instance — can be exercised in a unit test. A test
+// opens+sends, then drives __fireLoad(body) to simulate readyState 4 + the 'load' event.
+function makeFakeXhr() {
+  function FakeXHR() {
+    this.readyState = 0;
+    this._url = '';
+    this._body = '';
+    this.responseType = '';
+    this._listeners = {};
+  }
+  FakeXHR.prototype.open = function (method, url) {
+    this._url = url;
+    this.readyState = 1;
+  };
+  FakeXHR.prototype.send = function () {
+    /* the test drives the load manually via __fireLoad */
+  };
+  FakeXHR.prototype.addEventListener = function (t, fn) {
+    (this._listeners[t] = this._listeners[t] || []).push(fn);
+  };
+  Object.defineProperty(FakeXHR.prototype, 'responseText', {
+    configurable: true,
+    get() {
+      // 忠實模擬真 XHR：responseType 非 ''/'text' 時讀 responseText 依規範必須 throw
+      // （InvalidStateError）——yk-capture 的 nativeText 正是為此分流到 response getter。
+      if (this.responseType && this.responseType !== 'text') {
+        throw new Error('InvalidStateError: responseText is only valid for text responseType');
+      }
+      return this._body;
+    },
+  });
+  Object.defineProperty(FakeXHR.prototype, 'response', {
+    configurable: true,
+    get() {
+      return this.responseType === 'json' ? JSON.parse(this._body) : this._body;
+    },
+  });
+  FakeXHR.prototype.__fireLoad = function (body) {
+    this._body = body;
+    this.readyState = 4;
+    (this._listeners.load || []).forEach((fn) => fn({ target: this }));
+  };
+  return FakeXHR;
+}
+
+module.exports = { EXT, FIX, makeSandbox, load, makeDom, makeFakeXhr };

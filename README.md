@@ -70,6 +70,24 @@ real player DOM (automation/MCP can drive them) and the menu works in fullscreen
 card follows YouTube's light/dark theme. Changes apply live and persist across reloads
 (written through `bridge.js` to `chrome.storage`).
 
+- **原生播放 (Native playback)** — switches *how* the karaoke is drawn. Off (default) is
+  the **overlay** mode described above (we self-draw a caption box over a hidden native
+  caption). **On** is **native** mode: at the moment the player fetches the auto-caption,
+  we **cook** a karaoke-styled `json3` (one pop-on caption window per row, each word repainted
+  with an active / past / future pen via the track's real per-word timing) and **swap it into
+  the response**, so **YouTube's own caption renderer** draws the per-word highlight. Nothing
+  is self-drawn, so it inherits YouTube's native layout, fullscreen and caption settings;
+  **Bilingual** still works (two stacked native windows). The overlay-only **字幕樣式** preset
+  doesn't apply in native mode — the menu **disables** (but never clears) that select while
+  native is on. The **字幕全文** button re-homes to the third slot of our top-right column
+  (below Karaoke and ⚙ — there is no overlay box to ride on, and the top-left corner belongs
+  to YouTube's own fullscreen title/paid-promotion chrome). Toggling the mode forces the player
+  to reload the caption so the change is immediate; turning it (or the Karaoke toggle) off
+  restores the real caption the same way — unless you have meanwhile picked another track,
+  which we never override. See *Architecture* — it is its own hot-swappable module
+  (`yk-native.js`: the cook AND the mode's edge machine) plus a thin transform seam in
+  `yk-capture.js`; the capture pool always keeps the **original** body (read via a saved
+  native getter) so the transcript and the dual cook are never fed cooked text.
 - **字幕樣式 (Caption style)** — the overlay's look, applied live:
   - `預設` (default) — gold active word with a soft glow and a slight pop.
   - `YT` — matches YouTube's native caption (weight 400, white, near-square box);
@@ -158,7 +176,13 @@ DOM is built with `textContent` / `replaceChildren`.
 - `yk-timing.js` — pure active-line / word-state mapping.
 - `yk-parse.js` — pure json3 → words → lines (no DOM, no state).
 - `yk-yt.js` — stateless adapter over YouTube's player + DOM.
-- `yk-capture.js` — passive `fetch`/XHR hook capturing the asr timedtext body.
+- `yk-capture.js` — the `fetch`/XHR interceptor. Always captures the **original** asr
+  timedtext body into the pool (read via a saved native getter), and exposes a transform seam
+  (`registerTransform`/`clearTransform`, page-global) so native mode can swap the body the
+  **player** receives without ever corrupting the pool. No transform = byte-identical to passive.
+  The patch installs once (`__YK_NET__`) but holds NO logic: every decision is called through
+  the page-global `__YK_NETIMPL__`, re-pointed on each resolve, so hot-swapping this module
+  really changes what the live hook runs (an MCP-injection session can verify its own edits).
 - `yk-styles.js` — injects the overlay + transcript + settings-menu CSS.
 - `yk-overlay.js` — the centered karaoke overlay (owns its render rows).
 - `yk-transcript.js` — the side transcript panel (owns its panel state).
@@ -169,8 +193,18 @@ DOM is built with `textContent` / `replaceChildren`.
 - `yk-autodrive.js` — the **auto-translate** (auto-drive) feature as its own module
   (owns its drive latch); the engine calls its `drive()` each tick. Kept separate so the
   feature can be hot-swapped on its own — one feature, one independently-swappable unit.
-- `yk-engine.js` — lifecycle orchestrator: track pick, bind, render loop, SPA
-  re-init, on/off toggle.
+- `yk-native.js` — the **native playback mode** as its own hot-swappable module, all three
+  layers: a pure `cookKaraoke(entries, opts)` (parsed lines → karaoke `json3`: pop-on windows,
+  per-word repaint events, per-seg pens via `timing.wordState`, integer colours), the impure
+  `cook(url, body)` transform it registers on `yk-capture`, and the mode's **edge machine**
+  (`syncEdge`/`standDown`/`isOn`/`inBustWindow`) — when to (un)register the cook, when to force
+  the cache-bust re-fetch (`yt.refetchCaption`) on mode/selection/data edges, and how to restore
+  the real caption on the way out without ever overriding a track the user picked themselves.
+- `yk-engine.js` — lifecycle orchestrator: track pick, bind, render loop, SPA re-init,
+  on/off toggle. For native mode it only drives `native.syncEdge()` each tick, hands the
+  caption area over on the enter edge, pauses autodrive inside `native.inBustWindow()`, and
+  passes `restoreCaption` to teardown on the Karaoke-OFF click (nav/hot-swap teardowns don't
+  restore — the next video/instance re-cooks on its own).
 - `yk-main.js` — entry: installs the hook + boots the engine.
 - `bridge.js` — isolated-world relay: mirrors `chrome.storage` settings to the
   MAIN-world modules via `window.postMessage` (it has `chrome.*`; the MAIN world

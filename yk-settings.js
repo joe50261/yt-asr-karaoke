@@ -23,6 +23,9 @@
       // '' = off; otherwise a translation target language code (e.g. 'zh-Hant').
       // When set, the engine auto-drives the player into dual-track for that language.
       autoDualLang: '',
+      // false = overlay mode (we self-draw the karaoke); true = native playback mode
+      // (yk-native cooks a karaoke json3 and hands it to YouTube's own caption renderer).
+      nativeMode: false,
     };
 
     // Per-key normalizers — the single source of truth for how a raw stored/UI value
@@ -33,6 +36,7 @@
       captionStyle: (v) => v || 'default',
       translationOnTop: (v) => !!v,
       autoDualLang: (v) => v || '',
+      nativeMode: (v) => !!v,
     };
 
     const onMessage = (e) => {

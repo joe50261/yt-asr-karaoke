@@ -34,6 +34,7 @@
         "yk-transcript.js",
         "yk-panel.js",
         "yk-autodrive.js",
+        "yk-native.js",
         "yk-engine.js",
         "yk-main.js"
       ],

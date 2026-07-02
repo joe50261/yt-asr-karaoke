@@ -9,6 +9,7 @@ dual-track 配對 / `groupLines` / transcript 間距邏輯。
 |---|---|
 | `5ipNqGvS5Hw.en.asr.json3.json` | 原文自動字幕（en, ASR），前 ~90 秒 |
 | `5ipNqGvS5Hw.en-zh-Hant.asr.json3.json` | 同一條 ASR track 的自動翻譯（→ zh-Hant），前 ~90 秒 |
+| `cooked.5ipNqGvS5Hw.en.karaoke.json3.json` | **golden**：`cookKaraoke`（yk-native）對 en fixture 中 start∈[9100,10500]ms 行的輸出。配方（整數 fcForeColor / pop-on standalone cue / per-seg pPenId）經真 youtube.com live 實證；provenance 與重生程序見 `test/e2e-b/RUNBOOK.md`——嚴禁用改過的碼直接重生讓測試變綠 |
 | `meta.json` | 來源、抓取方式、精簡說明、統計 |
 | `_analyze.py` | 複刻 `groupLines` 的對齊驗證腳本（`python3 _analyze.py`） |
 

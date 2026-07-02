@@ -16,7 +16,7 @@
  */
 (function () {
   'use strict';
-  window.__YK__.register('transcript', ['config', 'timing', 'yt'], (config, timing, yt) => {
+  window.__YK__.register('transcript', ['config', 'settings', 'timing', 'yt'], (config, settings, timing, yt) => {
     const { ROOT_ID, TRANSCRIPT_ID, TRANSCRIPT_BTN_ID, TRANSCRIPT_OPEN_KEY, TRANSCRIPT_WIDTH_KEY } =
       config;
 
@@ -53,18 +53,26 @@
     }
 
     function ensureToggle() {
-      if (document.getElementById(TRANSCRIPT_BTN_ID)) return;
-      // Mount on the overlay root (the caption box) — like the overlay's resize grip,
-      // it's a root child with pointer-events:auto that survives the per-frame
-      // replaceChildren (render/clear only touch .yk-lines). So the button sticks to
-      // the caption box and moves with it. The root is created lazily once karaoke is
-      // showing, so the engine retries this each engaged frame until the host exists.
-      const host = document.getElementById(ROOT_ID);
+      // Host depends on the mode. In OVERLAY mode the button rides ON the overlay caption box
+      // (ROOT_ID) — like the resize grip, a root child with pointer-events:auto that survives
+      // the per-frame replaceChildren — so it moves with the caption. In NATIVE mode there is
+      // NO overlay box (YT draws the caption), so it lives on the PLAYER chrome instead.
+      // data-host drives the positioning CSS variant. We re-parent on a mode switch (a plain
+      // single-id guard can't tell the button is on the WRONG host).
+      const native = !!settings.current.nativeMode;
+      const host = native ? yt.getPlayerEl() : document.getElementById(ROOT_ID);
       if (!host) return;
-      const btn = document.createElement('button');
+      let btn = document.getElementById(TRANSCRIPT_BTN_ID);
+      if (btn) {
+        if (btn.parentElement !== host) host.appendChild(btn); // appendChild moves the node
+        btn.dataset.host = native ? 'player' : 'box';
+        return;
+      }
+      btn = document.createElement('button');
       btn.id = TRANSCRIPT_BTN_ID;
       btn.type = 'button';
       btn.textContent = '字幕全文';
+      btn.dataset.host = native ? 'player' : 'box';
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         e.preventDefault();

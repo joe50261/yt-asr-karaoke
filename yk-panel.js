@@ -8,9 +8,12 @@
  * Pure view over the settings hub: it READS settings.current to reflect the controls and
  * WRITES exclusively through settings.apply(partial) — never chrome.storage (the MAIN
  * world can't), never settings.current directly. apply() makes the change live this frame
- * and persists it via bridge.js. The four keys stay ORTHOGONAL (each control writes only
+ * and persists it via bridge.js. The five keys stay ORTHOGONAL (each control writes only
  * its own key) — in particular autoDualLang (auto-DRIVE target) never touches dualTrack
- * (the dual DISPLAY): see yk-autodrive / engine.syncBinding.
+ * (the dual DISPLAY): see yk-autodrive / engine.syncBinding. The one cross-control effect
+ * is presentational only: nativeMode DISABLES the 字幕樣式 select (the overlay preset has
+ * nothing to style when YouTube's own renderer draws the caption — README documents the
+ * preset as overlay-only) — it never writes captionStyle.
  *
  * The Auto-translate menu is built from yt.translationLanguages() — YouTube's REAL runtime
  * list — read live each time the panel opens (no hardcoded language knowledge, and the menu
@@ -30,6 +33,7 @@
     const DUAL_CHK = 'yk-set-dual';
     const AUTOLANG_SEL = 'yk-set-autolang';
     const TRANSTOP_CHK = 'yk-set-transtop';
+    const NATIVE_CHK = 'yk-set-native';
 
     const STYLE_OPTS = [
       ['default', '預設'],
@@ -149,11 +153,21 @@
       const body = document.createElement('div');
       body.className = 'ykp-body';
 
-      // Caption style
+      // Playback mode (the primary switch): native hands the cooked karaoke json3 to
+      // YouTube's own caption renderer; off = our self-drawn overlay.
+      const nativeSw = makeSwitch(NATIVE_CHK);
+      nativeSw.input.addEventListener('change', () => {
+        settings.apply({ nativeMode: nativeSw.input.checked });
+        syncControls(); // reflect the cross-control effect (字幕樣式 disabled) immediately
+      });
+      body.appendChild(makeRow('原生播放', '交給 YouTube 內建字幕描繪逐字 highlight（非自繪覆蓋層）', nativeSw.wrap));
+
+      // Caption style (overlay-only: native mode hands rendering to YouTube, so the
+      // preset has nothing to apply — syncControls disables the select there)
       const styleSel = makeSelect(STYLE_SEL);
       fillStyleOptions(styleSel);
       styleSel.addEventListener('change', () => settings.apply({ captionStyle: styleSel.value }));
-      body.appendChild(makeRow('字幕樣式', '預設 / YT / 進階（逐字填色）', styleSel));
+      body.appendChild(makeRow('字幕樣式', '預設 / YT / 進階（逐字填色）；原生播放時不適用', styleSel));
 
       // Bilingual (dual display)
       const dual = makeSwitch(DUAL_CHK);
@@ -183,11 +197,18 @@
     function syncControls() {
       const panel = document.getElementById(PANEL_ID);
       if (!panel) return;
+      const nativeSw = panel.querySelector('#' + NATIVE_CHK);
       const styleSel = panel.querySelector('#' + STYLE_SEL);
       const dual = panel.querySelector('#' + DUAL_CHK);
       const langSel = panel.querySelector('#' + AUTOLANG_SEL);
       const top = panel.querySelector('#' + TRANSTOP_CHK);
-      if (styleSel) styleSel.value = settings.current.captionStyle || 'default';
+      if (nativeSw) nativeSw.checked = !!settings.current.nativeMode;
+      if (styleSel) {
+        styleSel.value = settings.current.captionStyle || 'default';
+        // overlay-only control: freeze (don't clear) it while native mode owns rendering,
+        // so the stored preset survives a round-trip through native mode untouched
+        styleSel.disabled = !!settings.current.nativeMode;
+      }
       if (dual) dual.checked = !!settings.current.dualTrack;
       if (langSel) fillLangOptions(langSel, settings.current.autoDualLang || '');
       if (top) top.checked = !!settings.current.translationOnTop;

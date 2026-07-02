@@ -15,8 +15,8 @@
   'use strict';
   window.__YK__.register(
     'engine',
-    ['config', 'log', 'settings', 'yt', 'capture', 'parse', 'styles', 'overlay', 'transcript', 'autodrive', 'panel'],
-    (config, log, settings, yt, capture, parse, styles, overlay, transcript, autodrive, panel) => {
+    ['config', 'log', 'settings', 'yt', 'capture', 'parse', 'styles', 'overlay', 'transcript', 'autodrive', 'native', 'panel'],
+    (config, log, settings, yt, capture, parse, styles, overlay, transcript, autodrive, native, panel) => {
       const { TOGGLE_ID, ENABLED_KEY, ENGAGED_CLASS } = config;
 
       let state = freshLifecycle();
@@ -72,7 +72,10 @@
           if (next) {
             run();
           } else {
-            teardown();
+            // The user turned Karaoke OFF while staying on the video: if native mode was
+            // cooking, the player must get the REAL body back (restoreCaption) — otherwise
+            // the already-delivered cooked track keeps rendering karaoke with us "off".
+            teardown({ restoreCaption: true });
           }
         });
         player.appendChild(btn);
@@ -146,17 +149,41 @@
           return;
         }
         state.video = v;
-        // Auto-translate (the auto-drive) lives in its own module (yk-autodrive) so it can
-        // be hot-swapped on its own; the engine just feeds it the picked asr track each tick.
-        autodrive.drive(state.track, state.trackLang);
-        // Show karaoke only while the player's selected caption is our asr track (or a
-        // translation of it) AND that variant's body is captured. Otherwise step aside
-        // so the user's chosen native caption shows — never override it or leave blank.
-        if (yt.isAdShowing() || !syncBinding()) {
+        // Auto-translate (the auto-drive) lives in its own module (yk-autodrive) so it can be
+        // hot-swapped on its own; the engine feeds it the picked asr track each tick. Pause it
+        // during a native cache-bust's OFF→ON window so it can't re-select the cached variant
+        // and steal the fresh fetch the cook needs.
+        if (!native.inBustWindow()) {
+          autodrive.drive(state.track, state.trackLang);
+        }
+        // Native mode's lifecycle (register/clear the cook + cache-bust on mode/selection/data
+        // edges) lives in yk-native's edge machine; the engine only drives it each tick and
+        // handles the ENTER edge's DOM handover (drop our overlay, un-hide the native caption).
+        const wasNativeOn = native.isOn();
+        native.syncEdge(state.track, state.trackLang);
+        if (native.isOn() && !wasNativeOn) {
+          overlay.remove(); // drop the self-drawn overlay; YT now draws the cooked caption
+          yt.getPlayerEl()?.classList.remove(ENGAGED_CLASS); // un-hide the native caption
+        }
+        const ms = v.currentTime * 1000;
+        // syncBinding reactively binds to the player's current asr selection and parses the
+        // ORIGINAL captured body(ies); used by the overlay AND (in native mode) the transcript.
+        const bound = !yt.isAdShowing() && syncBinding();
+        if (native.isOn()) {
+          // Native mode: YouTube's own renderer draws the cooked karaoke — we never engage
+          // (the native caption must stay visible) and never draw the overlay. We only keep
+          // the side transcript in sync from the bound ORIGINAL lines.
+          if (bound) {
+            transcript.ensureToggle();
+            transcript.sync(ms, state.bind);
+          } else {
+            transcript.hide();
+          }
+        } else if (!bound) {
+          // Overlay mode, not engaged: hand the caption area back to the player.
           stepAside();
         } else {
           engage();
-          const ms = v.currentTime * 1000;
           overlay.render(state.bind, ms);
           // The 字幕全文 toggle lives ON the caption box, so attach it only after
           // overlay.render has created the root (idempotent; no-ops once present).
@@ -203,7 +230,11 @@
       function run() {
         if (!yt.isWatchPage()) return;
         if (!isEnabled()) {
-          // Still show the toggle so the user can turn it back on.
+          // Still show the toggle so the user can turn it back on. With Karaoke off we must
+          // not be cooking, so drop any registered transform + edge state too. No restore:
+          // this path is reached on load/navigation, where nothing cooked is on screen (the
+          // toggle-OFF click is the restoring path — see ensureToggle's handler).
+          native.standDown(false);
           styles.inject();
           ensureToggle();
           panel.ensureButton();
@@ -224,10 +255,17 @@
         });
       }
 
-      function teardown() {
+      function teardown({ restoreCaption = false } = {}) {
         state.active = false;
         cancelAnimationFrame(state.raf);
         yt.getPlayerEl()?.classList.remove(ENGAGED_CLASS); // restore the native caption
+        // Always drop the native cook so a cooked transform never leaks across SPA nav,
+        // Karaoke-OFF, or a hot-swap (it would otherwise cook the next video's fetch).
+        // restoreCaption=true (the Karaoke-OFF click, same video) additionally makes the
+        // player re-fetch the REAL body it is still displaying; nav/hot-swap paths pass
+        // false — on nav the next video fetches fresh anyway, and on hot-swap the incoming
+        // instance re-cooks immediately (a restore would just double the refetch).
+        native.standDown(restoreCaption);
         // NOTE: if auto-translate drove the player onto an asr translation (yk-autodrive
         // → yt.selectAsrVariant), we deliberately do NOT revert that caption selection here.
         // "We stand down; the user owns the player" — reverting would itself be an override.

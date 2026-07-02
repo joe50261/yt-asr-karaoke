@@ -11,7 +11,13 @@
 (function () {
   'use strict';
 
-  const DEFAULTS = { dualTrack: false, captionStyle: 'default', translationOnTop: false, autoDualLang: '' };
+  const DEFAULTS = {
+    dualTrack: false,
+    captionStyle: 'default',
+    translationOnTop: false,
+    autoDualLang: '',
+    nativeMode: false,
+  };
 
   function push() {
     chrome.storage.local.get(DEFAULTS, (settings) => {

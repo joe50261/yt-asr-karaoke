@@ -7,9 +7,10 @@
 # Node (dev test tooling: jest + playwright — not shipped in the extension)
 node_modules/
 
-# Test artifacts (Playwright e2e-a run output)
+# Test artifacts (Playwright e2e-a run output; jest coverage)
 test-results/
 playwright-report/
+coverage/
 
 # Packaged builds
 *.zip
