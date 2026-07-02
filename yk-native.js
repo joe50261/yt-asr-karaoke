@@ -12,19 +12,23 @@
  *    capture, no DOM — testable with the engine's own [{key,lines}] bind shape as input.
  *  - cook(url, originalText): the impure transform handed to capture. It parses the body,
  *    looks up the OTHER variant for dual-track, and calls cookKaraoke. Memoized per fetch.
- *  - the EDGE MACHINE (syncEdge/standDown/isOn/inBustWindow): the native-mode lifecycle.
+ *  - the EDGE MACHINE (syncEdge/standDown/isOn): the native-mode lifecycle.
  *    It lives HERE (not in the engine) so the whole feature — cook + when-to-cook — is one
  *    independently hot-swappable unit, and so the state machine is reachable by unit tests
  *    (mock settings/yt/capture in, drive syncEdge, assert refetch calls). The engine only
  *    calls syncEdge each tick, standDown on teardown, and branches its render on isOn().
  *
- * Edge-machine key idea: a SELECTION change (autodrive or the user switching tracks) already
- * makes the player fetch a fresh body, which the registered cook transforms — so it needs NO
- * cache-bust, only recording. We force an OFF→ON re-fetch (yt.refetchCaption) ONLY when the
- * player is sitting on a body the cook should change but won't re-fetch on its own: the FIRST
- * observation after entering native (a cached REAL body), or a cook-input change with the
- * SAME selection (a settings toggle, or the single→dual upgrade when the original arrives).
- * Not busting on selection changes is also what avoids racing autodrive.
+ * Mode-edge key idea（核心就兩件事：劫持＋切一遍）: the transform sits on the capture seam
+ * and cooks WHATEVER the player fetches — and the player fetches on every selection and every
+ * video/variant load (live-verified 2026-07-02: ANY setOption selection issues a real fresh
+ * request; there is NO player-side caption cache). So native mode mostly just… happens: page
+ * load, SPA nav, autodrive's own drive, a user track switch — each produces a fetch that the
+ * registered cook transforms. The ONLY thing that needs an explicit push is a SETTINGS flip
+ * while a caption is already on screen (nativeMode on/off, dual/top while on): the on-screen
+ * body is then KNOWN stale, so we ask autodrive (the ONE driver — we never touch selection
+ * ourselves) to redrive: re-select the current variant once → fresh fetch → cooked (or, with
+ * the transform just cleared, the REAL body — that is also how turning native off restores).
+ * State: `on` + one settings signature. No selection tracking, no pool latching, no orders.
  *
  * The json3 recipe is LIVE-VERIFIED (see memory native-json3-karaoke-cook-recipe):
  *  - each repaint event is a STANDALONE pop-on cue (wsWinStyles {juJustifCode:2}, NO sdScrollDir;
@@ -42,8 +46,8 @@
   'use strict';
   window.__YK__.register(
     'native',
-    ['config', 'log', 'settings', 'yt', 'parse', 'timing', 'capture'],
-    (config, log, settings, yt, parse, timing, capture) => {
+    ['config', 'log', 'settings', 'yt', 'parse', 'timing', 'capture', 'autodrive'],
+    (config, log, settings, yt, parse, timing, capture, autodrive) => {
       const { LINE_LEAD_MS } = config;
 
       // Pen indices into the pens[] array built below (0 is the empty default pen).
@@ -217,114 +221,73 @@
         memo.clear();
       }
 
-      // ---- the edge machine ----
-      const BUST_WINDOW_MS = 300; // OFF→ON gap in yt.refetchCaption (~120ms) plus margin
-      const BUST_COOLDOWN_MS = 1000; // debounce forced re-fetches; a skipped change retries next tick
-
-      const edge = {
-        on: false, // transform registered?
-        tlang: null, // last-observed selection; null = sentinel (forces ONE bust on first observation)
-        sig: null, // last-recorded cook-input signature
-        bustAt: 0, // last cache-bust timestamp (cooldown + the autodrive pause window)
-        origCap: false, // latch: original variant present in the pool (never evicted, so once true stays true)
-        track: null, // last track seen by syncEdge — what standDown restores against
-        trackLang: '',
-      };
+      // ---- the mode edge（極簡：on 旗標＋一個設定簽名）----
+      let on = false; // transform registered?
+      let prevSig = null; // null = 首次觀察：只初始化不 redrive（進場靠 player 的自然 fetch 生效）
+      let lastTrack = null; // standDown 還原用（teardown 呼叫時 engine 已不再傳參）
+      let lastTrackLang = '';
 
       function isOn() {
-        return edge.on;
-      }
-
-      // While a bust's OFF→ON swap is in flight the engine must pause the auto-drive, or it
-      // would re-select the (cached) variant and consume the fresh fetch the cook needs.
-      function inBustWindow() {
-        return Date.now() - edge.bustAt < BUST_WINDOW_MS;
+        return on;
       }
 
       // Leave native mode. restore=true additionally un-cooks what the player is DISPLAYING:
-      // if it still shows our asr variant (or we are mid-bust, i.e. the transient captions-off
-      // is our own doing), force a re-fetch so the real body replaces the cooked one. If the
-      // user has meanwhile switched to another track / turned captions off themselves, sel is
-      // null and NOT mid-bust — then we deliberately do nothing: the cooked body is not on
-      // screen, and re-selecting would override the user's choice.
+      // the transform is already cleared, so ONE re-select of the current variant makes the
+      // player fetch (always a real request — no player cache, live-verified) and render the
+      // REAL body. If the user has meanwhile switched away themselves (sel null and NOT an ad
+      // — ads report a null selection without the user having done anything), we deliberately
+      // do nothing: the cooked body is not on screen, and re-selecting would override them.
       function standDown(restore) {
-        const wasOn = edge.on;
-        edge.on = false;
+        const wasOn = on;
+        on = false;
         disable();
-        if (restore && wasOn && edge.track) {
-          const sel = yt.currentAsrSelection(edge.trackLang);
-          const tl = sel ? sel.tlang : inBustWindow() ? edge.tlang : null;
-          if (tl != null) {
-            if (yt.refetchCaption(edge.track, tl)) {
-              edge.bustAt = Date.now();
-            } else {
-              // One-shot path (teardown): no tick will retry, so surface it instead of
-              // silently leaving the cooked caption on screen.
-              log.warn('native restore re-fetch failed; the player may keep the cooked caption');
-            }
+        if (restore && wasOn && lastTrack) {
+          const sel = yt.currentAsrSelection(lastTrackLang);
+          // 廣告中 sel 恆 null——那不是「使用者切走」：盡力還原到原文變體（優於把 cooked
+          // 殘留留在快取軌上；廣告中 tracklist 可能為空 → 失敗走同一條 warn 路徑）。
+          const tl = sel ? sel.tlang : yt.isAdShowing() ? '' : null;
+          if (tl != null && !yt.selectAsrVariant(lastTrack, tl)) {
+            // One-shot path (teardown): no tick will retry, so surface it instead of
+            // silently leaving the cooked caption on screen.
+            log.warn('native restore re-select failed; the player may keep the cooked caption');
           }
         }
-        edge.tlang = null;
-        edge.sig = null;
-        edge.origCap = false;
-        edge.track = null;
-        edge.trackLang = '';
+        prevSig = null;
+        lastTrack = null;
+        lastTrackLang = '';
       }
 
-      // Per-tick edge driver (the engine calls this every frame while active).
+      // Per-tick mode-edge driver：劫持的掛/卸＋「設定簽名變了就切一遍」。
       function syncEdge(track, trackLang) {
-        if (!settings.current.nativeMode) {
-          if (edge.on) standDown(true);
-          return;
-        }
-        if (!edge.on) {
-          edge.on = true;
-          edge.tlang = null; // sentinel: forces ONE bust for the current cached body
-          edge.sig = null;
-          edge.origCap = false;
+        const native = !!settings.current.nativeMode;
+        if (native && !on) {
+          on = true;
           enable();
+        } else if (!native && on) {
+          on = false;
+          disable(); // transform 先卸：redrive 抓回來的就是真身——這就是關閉的當場還原
         }
-        edge.track = track || null;
-        edge.trackLang = trackLang || '';
+        lastTrack = track || null;
+        lastTrackLang = trackLang || '';
         if (!track) return;
-        const sel = yt.currentAsrSelection(edge.trackLang);
-        if (!sel) return; // nothing selected, or mid-bust (captions transiently off)
-        // origCap only matters when a second (original) row is wanted: a translation selected
-        // AND dual-track on. When it flips true that's the single→dual upgrade trigger. Latched:
-        // the pool never evicts, so once present it stays present — no per-frame pool scan after.
-        const dualWanted = settings.current.dualTrack && sel.tlang !== '';
-        if (dualWanted && !edge.origCap) edge.origCap = !!capture.hasCapturedVariant(track, '');
-        const origCap = dualWanted && edge.origCap;
-        // Only bits that can CHANGE the cook's output for the CURRENT selection enter the sig.
-        // On the original track ('' tlang) dual/top are inert (cook only goes dual when a
-        // translation is selected), so toggling them must not bust — that OFF→ON flicker
-        // would buy a byte-identical caption.
-        const sig = `${dualWanted ? 1 : 0}|${dualWanted && settings.current.translationOnTop ? 1 : 0}|${origCap ? 1 : 0}`;
-        const first = edge.tlang === null;
-        const selChanged = !first && sel.tlang !== edge.tlang;
-        const sigChanged = !first && sig !== edge.sig;
-        if (!first && !selChanged && !sigChanged) return; // steady state
-        if (selChanged && !sigChanged) {
-          // pure selection change → the player's own fresh fetch already cooked it; just record
-          edge.tlang = sel.tlang;
-          edge.sig = sig;
+        // 廣告期間不觀測：廣告下的畫面/選軌都不是主影片的事實。簽名比較是狀態性的，
+        // 廣告結束後第一個 tick 自然補上，事件不會丟。
+        if (yt.isAdShowing()) return;
+        // 只有會改變畫面上這份 body 的位才進簽名：native off 時 dual/top 是 inert
+        // （overlay 模式它們每幀即時生效，無需 re-fetch）。
+        const sig = native
+          ? `1|${settings.current.dualTrack ? 1 : 0}|${settings.current.translationOnTop ? 1 : 0}`
+          : '0';
+        if (prevSig === sig) return; // steady state
+        if (prevSig === null) {
+          prevSig = sig; // 首次觀察：進場不當場翻煮——player 進場自己的字幕 fetch 會被煮
           return;
         }
-        // selChanged AND sigChanged (e.g. autodrive drives ''→translation with dual on) still
-        // busts, deliberately: the player may serve the new selection from ITS cache (no fresh
-        // fetch for the cook), and that cached body could be a stale-sig cook. One extra
-        // OFF→ON on dual start is the price of never showing a stale composition.
-        // first-after-enter, or a same-selection cook-input change → force a re-fetch. Cooldown
-        // guards rapid re-fire; we record ONLY when the bust actually HAPPENED — a change
-        // skipped by the cooldown, or a refetch the player refused (no setOption yet / it
-        // threw: refetchCaption returns false without scheduling anything), stays unrecorded
-        // so the next tick retries. Never dropped.
-        const now = Date.now();
-        if (now - edge.bustAt < BUST_COOLDOWN_MS) return;
-        if (!yt.refetchCaption(track, sel.tlang)) return;
-        edge.tlang = sel.tlang;
-        edge.sig = sig;
-        edge.bustAt = now;
+        prevSig = sig;
+        // 使用者當場翻了設定：畫面上的 body 確定過期 → 請 driver 切一遍（重選當前變體
+        // → player 必發 fresh fetch → 被煮或還原真身）。選擇變更根本不觀測：player 對
+        // 新選擇自己會抓，自然被煮。
+        autodrive.redrive();
       }
 
       return {
@@ -335,9 +298,9 @@
         syncEdge,
         standDown,
         isOn,
-        inBustWindow,
         // hot-swap: drop the transform + edge state so a stale cook never lingers. No restore:
-        // the incoming instance re-enters via syncEdge next tick and re-busts on its own.
+        // the incoming instance re-enters via syncEdge next tick; a recipe change shows on the
+        // next natural fetch (or nudge autodrive.redrive() by hand from the MCP session).
         dispose: () => standDown(false),
       };
     },

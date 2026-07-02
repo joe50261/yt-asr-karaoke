@@ -23,19 +23,36 @@ runbook）。
 3. **控制變因**：測 ON/OFF 邊緣前先確認**起始狀態**不是已達標狀態；「畫面沒變」
    無鑑別力（壞掉也會沒變），要配一個陽性對照（改另一個輸入、證明輸出真的會動），
    並確認訊號真的送達（讀對應全域，見下）。
-4. **可觀測全域**：
+4. **javascript_tool 的丟結果陷阱**：eval 若跨 SPA 導航、或內部 await 超過約 3 秒，
+   回傳會變成 `{}`（動作其實有執行）。把「動作」與「讀取」拆成兩個 call，等待用
+   短輪詢；長觀測改存 page-global（如探針 log）事後讀。
+5. **歸因探針**（查「這個 fetch 是誰驅動的」）：wrap `player.setOption`、
+   `XMLHttpRequest.prototype.open`、`window.fetch`，凡 captions/track 與 timedtext
+   呼叫記 `{dt, path, 參數, stack}` 進 page-global；stack 裡出現 yk-*.js 幀＝我們驅動。
+   探針用完必拆（保留原函式引用逐一還原）。
+6. **外部雜訊**：首頁預覽播放器會為**別支影片**自發 timedtext（`v=` 別支、`lang=` 介面
+   語言、無 `tlang`）；歸因前先看 `v=` 參數，別誤算到擴充頭上。
+7. **可觀測全域**：
    - `window.__YK_TX__.fn` — 現任 transform（native ON ≠ null；OFF/退場 = null）。
    - `window.__YK_NETIMPL__` — 一次性 fetch/XHR 補丁「現在跑的邏輯」。熱抽換
      yk-capture 後其欄位必須換新（函式 identity 改變）＝新碼真的生效。
    - `window.__YK_CAP__` — 原始 body 池（**永遠不得**含 cooked 內容：任一 entry
      `JSON.parse` 後不得有 `pens` 內非空 `fcForeColor` 的我方配色 0xffe566）。
    - Network 面板 `timedtext` 請求 — 「強制重抓真的發生」的直接證據。
+8. **每一步注入/操作/斷言都前置 ad 檢查**——不是「出事再查廣告」的除錯提示，是
+   操作紀律：熱抽換、改設定、下單、讀斷言之前，一律先讀 `player.classList.contains
+   ('ad-showing')`，廣告中就輪詢等它結束（可略過就座標點掉）再動作。廣告期間邊緣機
+   明確不觀測（yk-native 的 ad 守門）、driver 持單/撤單，此時做的任何操作都測不到
+   東西，「沒反應」毫無鑑別力（實錯過一次：廣告中翻設定誤判成程式壞了）。
+9. **多輪熱抽換後 rAF 鏈可能斷**（tick 停、`autodrive.drive` 零呼叫但 `state.active`
+   仍 true）：`window.__YK__.swap('engine')` 強制重啟即復活。這是 hot-swap 載具的
+   邊角（run/teardown 的 rAF id 覆寫競態），磁碟單次載入不會發生。
 
 ## Native 模式驗證清單
 
 | # | 步驟 | 預期（觀測點） |
 |---|------|----------------|
-| 1 | ⚙ → 開「原生播放」 | `__YK_TX__.fn` 非 null；Network 出現新 timedtext（OFF→ON 重抓）；畫面 = YT 原生字幕、金色逐字 highlight（截圖 ×2 取第二張） |
+| 1 | ⚙ → 開「原生播放」 | `__YK_TX__.fn` 非 null；畫面 = YT 原生字幕、金色逐字 highlight（截圖 ×2 取第二張）。fetch 數：當場翻開關（字幕顯示中）→ redrive **恰 1 條**重選重抓；進場即已開 → **0 條**額外（player 進場的自然 fetch 直接被煮） |
 | 2 | 連續播放 ≥ 2 分鐘 | 字幕就地置換、**不堆疊**（pop-on standalone cue 配方的現場證據） |
 | 3 | 開 雙語對照 + 選譯文 | 兩列各自獨立移動 highlight；`譯文在上` 翻轉上下列（陽性對照） |
 | 4 | 關「原生播放」 | Network 有新 timedtext；畫面回原生白字；`__YK_TX__.fn` = null |
@@ -43,14 +60,19 @@ runbook）。
 | 6 | 使用者手選「手動字幕軌」→ 再關 native | **不得**動使用者的選軌（`getOption('captions','track')` 前後一致）——讓位守門 |
 | 7 | native 模式中 SPA 換片 | 新影片正常（transform 不跨片污染）；回上一片亦正常 |
 | 8 | 字幕全文按鈕 | native 模式下按鈕在**頂右欄第三格**（Karaoke/⚙ 之下），不壓 YT 左上標題／頭像 |
+| 9 | SPA 導離 watch 頁（點 logo） | 離開窗口內舊影片 **0 條** timedtext、0 次 setOption（用上方探針驗；守門前同程序我方會多發 2 條）；`__YK_TX__.fn` = null。註：首頁上可能出現**無 setOption 前導**的 (orig) fetch——那是 player 自己的導航行為，非我方 |
+| 10 | 導離後 back 回同支影片 | autodrive **自動**重新啟動（選軌自動回目標譯文、雙列恢復；engine teardown → `autodrive.reset()`）。進場 fetch **恰 1 條**（選軌本身）——進場不 redrive（首次觀察只初始化簽名），自然 fetch 直接被煮；已 live 驗證（2026-07-02/03） |
+| 11 | native 中翻「譯文在上」 | 設定簽名變更 → `autodrive.redrive()` → **恰 1 條** fetch 以新排序重煮，畫面上下對調；已 live 驗證（2026-07-03，截圖：[音乐] 上列金色/[Music] 下列） |
 
 **尚未 live 驗證的情境**（做過請把結果補記於此）：
 - 廣告中／廣告後的 native 行為（transform 掛著時廣告自帶字幕是否受影響——
   `isAsrTimedtextUrl` 理論上擋掉，未現場驗）。
-- **廣告中退場的還原判準**：`currentAsrSelection` 在廣告期間的實際回傳未知；若回
-  null 且已出 300ms bust 窗，此刻關 native／Karaoke 會被 standDown 判成「使用者已
-  切走」而不還原 → 廣告結束若玩家重顯快取的 cooked body，殘留症狀會經此路徑重現。
-  驗法：廣告播放中點 Karaoke: OFF → 廣告結束後看字幕是否為原生白字。
+- **廣告中退場的還原**：已實證廣告期間 `currentAsrSelection` 回 null；standDown 現在
+  以 `isAdShowing` 區分「廣告」與「使用者切走」，廣告中用 edge 記錄的選擇盡力還原
+  （unit 已覆蓋；selectAsrVariant 在廣告中可能因 tracklist 空而失敗 → warn）。**live
+  未驗**（需湊廣告時機）：廣告播放中點 Karaoke: OFF → 廣告結束後字幕應為原生白字。
+  另註：player 無字幕快取（實證），廣告結束若重新 fetch 主影片字幕，transform 已清
+  自然是真身——「廣告後重顯快取 cooked body」的殘留可能根本不會發生，待驗。
 - 逐行級字幕影片（無 per-word timing）在 native 模式的 cook 產物。
 
 ## Golden fixture 的 provenance 與重生程序

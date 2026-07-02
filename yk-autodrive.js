@@ -1,20 +1,25 @@
 /**
- * yk-autodrive — the "auto-translate" (auto-DRIVE) feature as its OWN hot-swappable DI module, so
- * iterating the drive logic is a SINGLE small MCP inject (re-eval this one ~40-line file);
- * the engine just calls drive() each tick and is never re-sent. (The DI re-resolves +
- * restarts the engine because it depends on us, but that uses the engine's EXISTING
- * factory — no engine source travels.) This is the whole point of the per-feature module
- * granularity: one feature = one independently-swappable unit.
+ * yk-autodrive — the ONE automatic caption-track driver, as its own hot-swappable DI
+ * module. All automatic setOption track-selection lives here — nobody else drives the
+ * player (the user's own clicks aside). Two jobs:
  *
- * EDGE-triggered, not polling: setting the menu's target language drives the player ONCE
- * onto the asr translation, then we stand down — we never poll/override the player after.
- * Setting 關閉 (autoDualLang === '') is an explicit RESET that re-arms the one-shot, and a
- * video change re-arms it too (self-tracked via yt.currentVideoId — no engine coordination).
+ *  1. AUTO-START (the 自動翻譯 one-shot): setting the menu's target language drives the
+ *     player ONCE onto the asr translation (original first, so dual-track has both
+ *     bodies), then stands down at 'done'. Re-armed by a video change, a target change,
+ *     or engine.teardown → reset() (the tick's navigation guard means drive() never runs
+ *     off-video, so autodrive cannot observe "I left" on its own).
  *
- * We never fetch: yt.selectAsrVariant uses the player's OWN setOption (the PLAYER fetches,
- * pot-gated; yk-capture's hook grabs the body). Every transition is gated on OBSERVED state
- * (captured bodies + the player's current selection) — there are no timers, no guessed
- * delays. Owns only its own latch; deps are the lower modules it orchestrates.
+ *  2. REDRIVE（切一遍）: yk-native calls redrive() when a cook-input setting flipped and
+ *     the CURRENT caption must be re-fetched to take effect. Execution = RE-SELECTING the
+ *     current variant, one step — live-verified (2026-07-02): ANY setOption selection
+ *     issues a real fresh timedtext request (the player has no caption cache), which the
+ *     capture seam then cooks (native on) or serves as the real body (native off — that
+ *     IS the way out's restore). One boolean, no orders/windows/TTLs: a redrive is only
+ *     requested when the on-screen body is KNOWN stale, so there is nothing to cancel.
+ *
+ * We never fetch: yt.selectAsrVariant uses the player's OWN setOption (the PLAYER
+ * fetches, pot-gated). Every transition is gated on OBSERVED state — no timers at all;
+ * the redrive flag is simply re-tried each tick until the player accepts it.
  */
 (function () {
   'use strict';
@@ -22,20 +27,25 @@
     let phase = 'start'; // start → orig → trans → done (one-shot per video / per target)
     let vid = ''; // current video id
     let lastTarget = ''; // last autoDualLang we acted on
+    let redriveWanted = false; // 「切一遍」旗標：下一個可行 tick 重選當前變體一次
 
-    // Called by the engine every tick with the picked asr track + its language. Drives the
-    // player at most twice (original, then translation), then sits at 'done' (stand down).
-    function drive(track, trackLang) {
-      const cur = yt.currentVideoId();
-      const target = settings.current.autoDualLang;
-      // Re-arm the one-shot whenever the video changes OR the target language changes —
-      // the latter covers switching A→B directly, and 關閉 (target='') which then no-ops
-      // below. Without this, 'done' would latch and a new target would never drive.
-      if (cur !== vid || target !== lastTarget) {
-        vid = cur;
-        lastTarget = target;
-        phase = 'start';
+    function redrive() {
+      redriveWanted = true;
+    }
+
+    function serveRedrive(track, trackLang) {
+      if (!redriveWanted || !track || yt.isAdShowing()) return;
+      const sel = yt.currentAsrSelection(trackLang);
+      if (!sel) {
+        redriveWanted = false; // 沒顯示＝沒東西可切；絕不替使用者打開字幕
+        return;
       }
+      // 重選當前變體＝強制重抓；失敗（player 未 ready）旗標留著，下一 tick 自然重試。
+      if (yt.selectAsrVariant(track, sel.tlang)) redriveWanted = false;
+    }
+
+    // 一次性自動啟動鏈：至多驅動兩步（原文、然後譯文），完成即 'done' 站開。
+    function autoStart(track, trackLang, target) {
       if (!target || phase === 'done' || !track || yt.isAdShowing()) return;
       const haveOrig = !!capture.capturedJsonForVariant(track, '');
       const haveTrans = !!capture.capturedJsonForVariant(track, target);
@@ -62,13 +72,37 @@
       }
     }
 
+    // Called by the engine every tick with the picked asr track + its language.
+    function drive(track, trackLang) {
+      const cur = yt.currentVideoId();
+      const target = settings.current.autoDualLang;
+      // Re-arm the one-shot whenever the video changes OR the target language changes —
+      // the latter covers switching A→B directly, and 關閉 (target='') which then no-ops
+      // below. Without this, 'done' would latch and a new target would never drive.
+      if (cur !== vid || target !== lastTarget) {
+        vid = cur;
+        lastTarget = target;
+        phase = 'start';
+      }
+      autoStart(track, trackLang, target);
+      serveRedrive(track, trackLang);
+    }
+
+    function reset() {
+      phase = 'start';
+      vid = '';
+      lastTarget = '';
+      redriveWanted = false;
+    }
+
     return {
       drive,
-      dispose() {
-        phase = 'start';
-        vid = '';
-        lastTarget = '';
-      },
+      redrive,
+      // 由 engine 在 teardown 時呼叫（與 transcript.reset 同型）：one-shot latch 是模組級、
+      // 跨導航存活，而 engine tick 的導航守門讓 drive 在離開影片後不再跑——autodrive 自己
+      // 觀察不到「離開」。沒有這個 re-arm，同支影片導離再導回會卡在 done、不再自動啟動。
+      reset,
+      dispose: reset,
     };
   });
 })();

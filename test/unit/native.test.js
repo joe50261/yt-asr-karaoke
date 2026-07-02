@@ -11,7 +11,7 @@ function loadNative() {
   const s = makeSandbox();
   load(s, [
     'yk-di.js', 'yk-config.js', 'yk-log.js', 'yk-settings.js', 'yk-timing.js',
-    'yk-parse.js', 'yk-yt.js', 'yk-capture.js', 'yk-native.js',
+    'yk-parse.js', 'yk-yt.js', 'yk-capture.js', 'yk-autodrive.js', 'yk-native.js',
   ]);
   const di = s.window.__YK__;
   return { s, di, native: di.resolve('native'), parse: di.resolve('parse'), timing: di.resolve('timing') };
@@ -190,6 +190,7 @@ describe('cook() — impure transform: 守門 / memo / dual 組裝（mock 注入
       },
       registerTransform() {}, clearTransform() {},
     }));
+    di.register('autodrive', [], () => ({ redrive() {} }));
     load(s, ['yk-native.js']);
     return { native: di.resolve('native'), parse: di.resolve('parse'), current, pool, calls };
   }
@@ -267,171 +268,160 @@ describe('cook() — impure transform: 守門 / memo / dual 組裝（mock 注入
   });
 });
 
-describe('edge machine — native 模式生命週期（syncEdge/standDown，mock 注入 + 假時鐘）', () => {
+describe('mode edge — 劫持的掛/卸＋「設定簽名變了就切一遍」（mock 注入）', () => {
   const TRACK = { languageCode: 'en' };
 
   function loadEdge(cur = {}) {
     const s = makeSandbox();
-    let now = 1000000;
-    s.Date = { now: () => now }; // 模組執行期讀 context 全域 Date → 可控時鐘
     load(s, ['yk-di.js', 'yk-config.js', 'yk-log.js', 'yk-timing.js', 'yk-parse.js']);
     const di = s.window.__YK__;
     const current = Object.assign(
       { nativeMode: true, dualTrack: false, translationOnTop: false },
       cur,
     );
-    const refetches = [];
+    let redrives = 0; // autodrive.redrive() 的呼叫數（「切一遍」請求）
+    const selects = []; // yt.selectAsrVariant（僅 standDown 還原會用）
     let sel = { tlang: '' };
-    let hasOrig = false;
-    let refetchOk = true;
+    let selectOk = true;
+    let ad = false;
     const tx = { fn: null };
     di.register('settings', [], () => ({ current }));
     di.register('yt', [], () => ({
       currentVideoId: () => 'abc',
       currentAsrSelection: () => sel,
-      refetchCaption: (_t, tl) => { refetches.push(tl); return refetchOk; },
+      isAdShowing: () => ad,
+      selectAsrVariant: (_t, tl) => { selects.push(tl); return selectOk; },
     }));
     di.register('capture', [], () => ({
-      hasCapturedVariant: () => hasOrig,
+      hasCapturedVariant: () => false,
       capturedJsonForVariant: () => null,
       registerTransform: (f) => { tx.fn = f; },
       clearTransform: () => { tx.fn = null; },
     }));
+    di.register('autodrive', [], () => ({ redrive: () => { redrives++; } }));
     load(s, ['yk-native.js']);
     return {
-      native: di.resolve('native'), current, refetches, tx,
+      native: di.resolve('native'), current, selects, tx,
+      redrives: () => redrives,
       setSel: (v) => { sel = v; },
-      setHasOrig: (v) => { hasOrig = v; },
-      setRefetchOk: (v) => { refetchOk = v; },
-      advance: (ms) => { now += ms; },
+      setSelectOk: (v) => { selectOk = v; },
+      setAd: (v) => { ad = v; },
     };
   }
 
-  test('進入：註冊 transform；沒有 track 前絕不 bust', () => {
-    const { native, refetches, tx } = loadEdge();
-    native.syncEdge(null, '');
+  test('進場（native 已開）：註冊 transform、首次觀察只初始化——不當場翻煮，等自然 fetch', () => {
+    const { native, redrives, tx } = loadEdge();
+    native.syncEdge(TRACK, 'en');
+    native.syncEdge(TRACK, 'en');
     expect(native.isOn()).toBe(true);
     expect(typeof tx.fn).toBe('function');
-    expect(refetches).toEqual([]);
+    expect(redrives()).toBe(0); // 進場零多餘動作：player 進場自己的字幕 fetch 會被煮
   });
 
-  test('首次觀察到 selection → bust 一次；之後穩態不再 bust', () => {
-    const { native, refetches } = loadEdge();
+  test('當場開 native（off→on）→ 掛 transform + redrive 一次；穩態不再', () => {
+    const { native, redrives, current, tx } = loadEdge({ nativeMode: false });
+    native.syncEdge(TRACK, 'en'); // 首次觀察（sig '0'）
+    expect(tx.fn).toBeNull();
+    expect(redrives()).toBe(0);
+    current.nativeMode = true; // 使用者當場翻開關
     native.syncEdge(TRACK, 'en');
-    expect(refetches).toEqual(['']);
+    expect(typeof tx.fn).toBe('function');
+    expect(redrives()).toBe(1); // 切一遍 → 畫面上的真身被重抓重煮
     native.syncEdge(TRACK, 'en');
-    native.syncEdge(TRACK, 'en');
-    expect(refetches).toEqual(['']); // steady state
+    expect(redrives()).toBe(1); // steady state
   });
 
-  test('純 selection 變更：只記錄不 bust（玩家自己的新 fetch 已被煮）', () => {
-    const { native, refetches, setSel, advance } = loadEdge();
-    native.syncEdge(TRACK, 'en'); // first bust
-    advance(1100);
-    setSel({ tlang: 'ja' });
+  test('當場關 native（on→off）→ 先卸 transform 再 redrive（抓回來的就是真身＝當場還原）', () => {
+    const { native, redrives, current, tx } = loadEdge();
     native.syncEdge(TRACK, 'en');
-    expect(refetches).toEqual(['']); // 沒有第二次 bust
+    current.nativeMode = false;
     native.syncEdge(TRACK, 'en');
-    expect(refetches).toEqual(['']);
+    expect(native.isOn()).toBe(false);
+    expect(tx.fn).toBeNull();
+    expect(redrives()).toBe(1);
   });
 
-  test('同 selection 的 sig 變更 → bust；cooldown 內先擋、下一 tick 補（不丟事件）', () => {
-    const { native, refetches, current, setSel, advance } = loadEdge();
-    setSel({ tlang: 'zh-Hant' }); // 譯文軌：dual 位對輸出有效
-    native.syncEdge(TRACK, 'en'); // first bust @t0
-    advance(500);
-    current.dualTrack = true; // sig 變（dualWanted 翻面）
-    native.syncEdge(TRACK, 'en');
-    expect(refetches).toHaveLength(1); // cooldown（1000ms）內：先擋下
-    advance(600); // t0+1100
-    native.syncEdge(TRACK, 'en');
-    expect(refetches).toHaveLength(2); // 補上，不是被丟掉
-  });
-
-  test('原文軌（tlang=""）上切 dual/top 設定 → 不 bust（改不了輸出的位不進 sig，免白閃字幕）', () => {
-    const { native, refetches, current, advance } = loadEdge();
-    native.syncEdge(TRACK, 'en'); // first bust（sel 是原文 ''）
-    advance(1100);
+  test('native on 時翻 dual/top → 各 redrive 一次；off 時翻 → inert 不動', () => {
+    const { native, redrives, current } = loadEdge();
+    native.syncEdge(TRACK, 'en'); // 首次
     current.dualTrack = true;
     native.syncEdge(TRACK, 'en');
+    expect(redrives()).toBe(1);
     current.translationOnTop = true;
     native.syncEdge(TRACK, 'en');
-    expect(refetches).toHaveLength(1); // 原文軌上 dual/top 是 inert：只有當初的 first bust
+    expect(redrives()).toBe(2);
+    current.nativeMode = false; // 關掉（+1 還原 redrive）
+    native.syncEdge(TRACK, 'en');
+    expect(redrives()).toBe(3);
+    current.dualTrack = false; // off 下翻 display 設定：overlay 每幀即時生效，無需重抓
+    current.translationOnTop = false;
+    native.syncEdge(TRACK, 'en');
+    expect(redrives()).toBe(3);
   });
 
-  test('refetchCaption 失敗（player 瞬時不可用）→ 不記錄，下一 tick 重試到成功才記錄', () => {
-    const { native, refetches, setRefetchOk } = loadEdge();
-    setRefetchOk(false);
-    native.syncEdge(TRACK, 'en'); // first bust 嘗試：被 player 拒絕
-    native.syncEdge(TRACK, 'en'); // 未記錄 → 下一 tick 立刻重試
-    expect(refetches).toHaveLength(2);
-    setRefetchOk(true);
-    native.syncEdge(TRACK, 'en'); // 重試成功 → 記錄
-    expect(refetches).toHaveLength(3);
+  test('選擇變更完全不觀測：換軌不觸發任何動作（player 自己的新 fetch 自然被煮）', () => {
+    const { native, redrives, setSel } = loadEdge();
     native.syncEdge(TRACK, 'en');
-    expect(refetches).toHaveLength(3); // 穩態：不再重試
+    setSel({ tlang: 'ja' });
+    native.syncEdge(TRACK, 'en');
+    setSel(null); // 連字幕關掉也不關 mode edge 的事
+    native.syncEdge(TRACK, 'en');
+    expect(redrives()).toBe(0);
   });
 
-  test('single→dual 升級：原文進池（origCap 翻面）→ bust 重煮', () => {
-    const { native, refetches, current, setSel, setHasOrig, advance } = loadEdge();
-    current.dualTrack = true;
-    setSel({ tlang: 'zh-Hant' });
-    native.syncEdge(TRACK, 'en'); // first bust（此時池裡沒原文）
-    expect(refetches).toEqual(['zh-Hant']);
-    advance(1100);
-    setHasOrig(true); // 原文變體進池
+  test('廣告守門：廣告中不觀測簽名；廣告結束補上、事件不丟', () => {
+    const { native, redrives, current, setAd } = loadEdge();
+    native.syncEdge(TRACK, 'en'); // 首次
+    setAd(true);
+    current.dualTrack = true; // 廣告中翻設定
     native.syncEdge(TRACK, 'en');
-    expect(refetches).toEqual(['zh-Hant', 'zh-Hant']);
+    expect(redrives()).toBe(0); // 廣告中不動
+    setAd(false);
+    native.syncEdge(TRACK, 'en');
+    expect(redrives()).toBe(1); // 廣告後第一個 tick 補上（狀態性比較）
   });
 
-  test('關 nativeMode（selection 可見）→ 清 transform + refetch 還原真身', () => {
-    const { native, refetches, current, tx, advance } = loadEdge();
+  test('關 nativeMode 的 teardown 路徑（standDown(true)，sel 可見）→ 一步重選還原真身', () => {
+    const { native, selects, tx } = loadEdge();
     native.syncEdge(TRACK, 'en');
-    advance(1100);
-    current.nativeMode = false;
-    native.syncEdge(TRACK, 'en');
+    native.standDown(true);
     expect(native.isOn()).toBe(false);
     expect(tx.fn).toBeNull();
-    expect(refetches).toEqual(['', '']); // 第二筆 = 還原 refetch
+    expect(selects).toEqual(['']); // transform 已清 → 重選抓回的就是真身
   });
 
-  test('關 nativeMode 於 mid-bust（sel 瞬時 null）→ 用記錄的 tlang 還原', () => {
-    const { native, refetches, current, setSel, advance } = loadEdge();
-    native.syncEdge(TRACK, 'en'); // bust @t0
-    advance(100); // 仍在 300ms bust 窗內
-    setSel(null); // OFF→ON 空窗：字幕暫時是關的
-    current.nativeMode = false;
+  test('使用者已切走（sel null 且非廣告）→ 絕不重選蓋掉使用者的選擇', () => {
+    const { native, selects, setSel, tx } = loadEdge();
     native.syncEdge(TRACK, 'en');
-    expect(refetches).toEqual(['', '']); // fallback 用記錄的 ''
+    setSel(null);
+    native.standDown(true);
+    expect(selects).toEqual([]);
+    expect(tx.fn).toBeNull();
   });
 
-  test('關 nativeMode 但使用者已切走（sel null 且非 mid-bust）→ 絕不 refetch 蓋掉使用者的選擇', () => {
-    const { native, refetches, current, setSel, advance, tx } = loadEdge();
-    native.syncEdge(TRACK, 'en'); // bust @t0
-    advance(400); // 出了 bust 窗
-    setSel(null); // 使用者切到手動軌 / 自己關了字幕
-    current.nativeMode = false;
+  test('廣告中退場（sel null 但 ad-showing）→ 盡力還原到原文變體，不誤判成使用者切走', () => {
+    const { native, selects, setSel, setAd } = loadEdge();
     native.syncEdge(TRACK, 'en');
-    expect(refetches).toEqual(['']); // 只有當初的 first bust，沒有還原 refetch
-    expect(tx.fn).toBeNull(); // transform 照樣清掉
+    setAd(true);
+    setSel(null); // 廣告期選軌回報 null——不是使用者切走
+    native.standDown(true);
+    expect(selects).toEqual(['']);
   });
 
-  test('standDown(false)（nav/hot-swap 路徑）→ 清 transform、永不 refetch', () => {
-    const { native, refetches, tx, advance } = loadEdge();
+  test('standDown(false)（nav/hot-swap 路徑）→ 清 transform、永不重選', () => {
+    const { native, selects, tx } = loadEdge();
     native.syncEdge(TRACK, 'en');
-    advance(1100);
     native.standDown(false);
     expect(tx.fn).toBeNull();
-    expect(refetches).toEqual(['']);
+    expect(selects).toEqual([]);
     expect(native.isOn()).toBe(false);
   });
 
-  test('inBustWindow：bust 後 300ms 內 true（engine 靠它暫停 autodrive），過窗 false', () => {
-    const { native, advance } = loadEdge();
-    native.syncEdge(TRACK, 'en'); // bust
-    expect(native.inBustWindow()).toBe(true);
-    advance(301);
-    expect(native.inBustWindow()).toBe(false);
+  test('還原重選被 player 拒絕（瞬時不可用）→ 不 throw（一次性路徑，log 警告即可）', () => {
+    const { native, setSelectOk } = loadEdge();
+    native.syncEdge(TRACK, 'en');
+    setSelectOk(false);
+    expect(() => native.standDown(true)).not.toThrow();
   });
 });
 

@@ -237,99 +237,7 @@ describe('yk-yt — runtime assert (mock player DOM)', () => {
   });
 });
 
-describe('yk-yt.refetchCaption — OFF→ON 強制重抓（手動 timer 佇列驅動延遲步）', () => {
-  // 整個 native 功能的「強制重抓」騎在 OFF→ON 序列上（同變體直接重選是快取 no-op）。
-  // 這裡驗契約：先 OFF、延遲後重選；三個守門（導航走了 / 有人已選軌 / 暫時失敗要重試）。
-  function setup(opts = {}) {
-    const s = makeSandbox();
-    const timers = [];
-    s.setTimeout = (fn) => { timers.push(fn); return timers.length; };
-    const sets = [];
-    let curTrack = null; // getOption('captions','track') 的回傳（我們的 OFF 步後應為空）
-    let tracklistFails = 0;
-    const player = {
-      getOption: (_m, k) => {
-        if (k === 'track') return curTrack;
-        if (k === 'tracklist') {
-          if (tracklistFails > 0) { tracklistFails--; throw new Error('transient'); }
-          return [{ kind: 'asr', languageCode: 'en' }];
-        }
-        return null;
-      },
-      setOption: (_m, _k, v) => {
-        if (opts.breakSetOption) throw new Error('boom');
-        sets.push(v);
-      },
-    };
-    s.document.querySelector = (sel) =>
-      sel === '#movie_player' || sel === '.html5-video-player' ? player : null;
-    load(s, ['yk-di.js', 'yk-yt.js']);
-    return {
-      s, sets, timers,
-      yt: s.window.__YK__.resolve('yt'),
-      flush: () => { timers.splice(0).forEach((fn) => fn()); },
-      setCur: (v) => { curTrack = v; },
-      failTracklist: (n) => { tracklistFails = n; },
-    };
-  }
-  const TRACK = { languageCode: 'en' };
-
-  test('happy path：先 setOption OFF（空物件），延遲步重選同 asr 變體', () => {
-    const { yt, sets, flush } = setup();
-    expect(yt.refetchCaption(TRACK, '')).toBe(true);
-    expect(sets).toEqual([{}]); // OFF 先落地
-    flush();
-    expect(sets).toHaveLength(2);
-    expect(sets[1].kind).toBe('asr'); // ON：重選 asr 變體 → 玩家發新 XHR
-  });
-
-  test('SPA 導航守門：延遲步 fire 時影片已換 → 絕不把舊軌選到新影片', () => {
-    const { s, yt, sets, flush } = setup();
-    yt.refetchCaption(TRACK, '');
-    s.location.search = '?v=zzz'; // currentVideoId 變了
-    flush();
-    expect(sets).toEqual([{}]); // 只有 OFF，沒有補選
-  });
-
-  test('讓位守門：空窗期有人（使用者/播放器）已選了軌 → 不覆寫', () => {
-    const { yt, sets, flush, setCur } = setup();
-    yt.refetchCaption(TRACK, '');
-    setCur({ languageCode: 'xx', kind: 'standard' }); // 使用者手選了別軌
-    flush();
-    expect(sets).toEqual([{}]);
-  });
-
-  test('暫時失敗會重試：tracklist 第一次 throw，第二次成功補上重選', () => {
-    const { yt, sets, timers, flush, failTracklist } = setup();
-    failTracklist(1);
-    yt.refetchCaption(TRACK, '');
-    flush(); // 第一次嘗試失敗 → 重新排程
-    expect(sets).toEqual([{}]);
-    expect(timers).toHaveLength(1);
-    flush(); // 重試成功
-    expect(sets).toHaveLength(2);
-    expect(sets[1].kind).toBe('asr');
-  });
-
-  test('重試有上限：持續失敗最終放棄（不留永久 timer、字幕留給使用者手動處理）', () => {
-    const { yt, sets, timers, flush, failTracklist } = setup();
-    failTracklist(999);
-    yt.refetchCaption(TRACK, '');
-    let n = 0;
-    while (timers.length && n++ < 40) flush();
-    expect(timers).toHaveLength(0); // 排程收斂，不是無限重試
-    expect(sets).toEqual([{}]);
-  });
-
-  test('setOption 一開始就 throw → 回 false 且不排程延遲步', () => {
-    const { yt, sets, timers } = setup({ breakSetOption: true });
-    expect(yt.refetchCaption(TRACK, '')).toBe(false);
-    expect(sets).toEqual([]);
-    expect(timers).toHaveLength(0);
-  });
-});
-
-describe('yk-engine — tick 的 native 分支 / autodrive 暫停窗 / teardown 還原旗標（全 mock 注入）', () => {
+describe('yk-engine — tick 的 native 分支 / 導航守門 / teardown 還原旗標（全 mock 注入）', () => {
   function setup() {
     const s = makeSandbox();
     const dom = makeDom();
@@ -345,9 +253,10 @@ describe('yk-engine — tick 的 native 分支 / autodrive 暫停窗 / teardown 
     di.register('settings', [], () => ({ current: cur }));
     const video = { currentTime: 5 };
     const track = { languageCode: 'en', kind: 'asr' };
+    let vid = 'abc'; // 可變：導航窗口測試會把它換掉模擬 pushState 先行
     di.register('yt', [], () => ({
       isWatchPage: () => true,
-      currentVideoId: () => 'abc',
+      currentVideoId: () => vid,
       getPlayerEl: () => player,
       getVideo: () => video,
       isAdShowing: () => false,
@@ -369,7 +278,7 @@ describe('yk-engine — tick 的 native 分支 / autodrive 暫停窗 / teardown 
       parseCaptionEvents: () => [{}],
       groupLines: () => [{ start: 0, end: 1000, text: 'x', words: [] }],
     }));
-    const calls = { render: 0, overlayRemove: 0, sync: 0, hide: 0, ensure: 0, drives: 0, standDowns: [] };
+    const calls = { render: 0, overlayRemove: 0, sync: 0, hide: 0, ensure: 0, drives: 0, syncEdges: 0, autodriveResets: 0, standDowns: [] };
     di.register('styles', [], () => ({ inject() {} }));
     di.register('overlay', [], () => ({
       render: () => calls.render++, clear() {}, remove: () => calls.overlayRemove++, invalidate() {},
@@ -377,14 +286,16 @@ describe('yk-engine — tick 的 native 分支 / autodrive 暫停窗 / teardown 
     di.register('transcript', [], () => ({
       ensureToggle: () => calls.ensure++, sync: () => calls.sync++, hide: () => calls.hide++, reset() {},
     }));
-    di.register('autodrive', [], () => ({ drive: () => calls.drives++ }));
+    di.register('autodrive', [], () => ({
+      drive: () => calls.drives++,
+      reset: () => calls.autodriveResets++,
+    }));
     // native 的 mock 狀態機：syncEdge 把 on 拉到 nat.next（edge 機本體已在 native.test.js 隔離測過；
-    // 這裡只驗 engine 對契約的使用：enter-edge 的 DOM 交接、isOn 分支、inBustWindow 暫停、standDown 旗標）
-    const nat = { on: false, next: true, busting: false };
+    // 這裡只驗 engine 對契約的使用：enter-edge 的 DOM 交接、isOn 分支、standDown 旗標）
+    const nat = { on: false, next: true };
     di.register('native', [], () => ({
       isOn: () => nat.on,
-      inBustWindow: () => nat.busting,
-      syncEdge: () => { nat.on = nat.next; },
+      syncEdge: () => { calls.syncEdges++; nat.on = nat.next; },
       standDown: (r) => { calls.standDowns.push(!!r); nat.on = false; },
       enable() {}, disable() {},
     }));
@@ -397,6 +308,7 @@ describe('yk-engine — tick 的 native 分支 / autodrive 暫停窗 / teardown 
       $: (id) => s.document.getElementById(id),
       settle: () => new Promise((r) => setImmediate(r)),
       tick: () => { const fn = rafQ.shift(); if (fn) fn(); },
+      setVid: (v) => { vid = v; },
     };
   }
 
@@ -431,18 +343,6 @@ describe('yk-engine — tick 的 native 分支 / autodrive 暫停窗 / teardown 
     expect(ctx.player.classList.contains(ctx.config.ENGAGED_CLASS)).toBe(true);
   });
 
-  test('bust 窗內暫停 autodrive，出窗恢復（防 autodrive 吃掉重抓的新鮮 fetch）', async () => {
-    const ctx = await setup();
-    await started(ctx);
-    ctx.nat.busting = true;
-    const before = ctx.calls.drives;
-    ctx.tick();
-    expect(ctx.calls.drives).toBe(before); // 窗內：不 drive
-    ctx.nat.busting = false;
-    ctx.tick();
-    expect(ctx.calls.drives).toBe(before + 1); // 出窗：恢復
-  });
-
   test('Karaoke 開關 OFF → teardown 帶 restoreCaption：native.standDown(true) 還原真身', async () => {
     const ctx = await setup();
     await started(ctx);
@@ -457,6 +357,186 @@ describe('yk-engine — tick 的 native 分支 / autodrive 暫停窗 / teardown 
     ctx.tick();
     ctx.engine.dispose(); // dispose → teardown()（nav/hot-swap 同路徑）
     expect(ctx.calls.standDowns.at(-1)).toBe(false);
+  });
+
+  test('導航窗口守門：URL 已換、teardown 未到 → tick 不驅動播放器，只續排 rAF', async () => {
+    // live 實證的洩漏（見 yk-engine tick 頭註）：pushState 之後、yt-navigate-finish 之前
+    // 的窗口內，autodrive 重選 + syncEdge 誤 bust 會讓舊影片多發 timedtext。
+    const ctx = await setup();
+    await started(ctx);
+    ctx.tick(); // 陽性對照：正常 tick 有驅動
+    const base = { ...ctx.calls };
+    expect(base.drives).toBeGreaterThan(0);
+    expect(base.syncEdges).toBeGreaterThan(0);
+    ctx.setVid(''); // 導航到非 watch 頁（watch→watch 則是另一個 id，同樣不等）
+    ctx.tick();
+    expect(ctx.calls.drives).toBe(base.drives); // 不 drive（autodrive 不得重選舊軌）
+    expect(ctx.calls.syncEdges).toBe(base.syncEdges); // 不 syncEdge（不得誤 bust）
+    expect(ctx.calls.render).toBe(base.render); // 不畫
+    expect(ctx.calls.sync).toBe(base.sync); // 不動側欄
+    expect(ctx.rafQ.length).toBeGreaterThan(0); // 但迴圈不死：續排 rAF 等正式 teardown
+    ctx.setVid('abc'); // 對照：回到原影片 id → 恢復驅動（守門不是永久停機）
+    ctx.tick();
+    expect(ctx.calls.drives).toBe(base.drives + 1);
+  });
+
+  test('teardown 通知 autodrive.reset（same-video 導離再導回要重新自動啟動）', async () => {
+    // tick 導航守門的連帶效應：drive 在離開後不再跑，autodrive 的 one-shot latch
+    // 觀察不到「離開」——不 re-arm 的話，同支影片回歸會卡在 done、字幕不再自動恢復。
+    const ctx = await setup();
+    await started(ctx);
+    ctx.tick();
+    const before = ctx.calls.autodriveResets;
+    ctx.engine.dispose(); // dispose → teardown()（導離同路徑）
+    expect(ctx.calls.autodriveResets).toBeGreaterThan(before);
+  });
+});
+
+describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive 切一遍（mock 注入）', () => {
+  function setup() {
+    const s = makeSandbox();
+    load(s, ['yk-di.js']);
+    const di = s.window.__YK__;
+    const cur = { autoDualLang: 'zh-Hant' };
+    di.register('settings', [], () => ({ current: cur }));
+    const pool = new Set(); // 已捕獲的變體 key（'' = 原文）
+    di.register('capture', [], () => ({
+      capturedJsonForVariant: (_t, k) => (pool.has(k) ? { events: [] } : null),
+    }));
+    let vid = 'abc';
+    let selTlang = null; // null = 未選任何 asr 變體
+    let selectOk = true;
+    let ad = false;
+    const selects = [];
+    di.register('yt', [], () => ({
+      currentVideoId: () => vid,
+      isAdShowing: () => ad,
+      currentAsrSelection: () => (selTlang == null ? null : { tlang: selTlang }),
+      selectAsrVariant: (_t, tl) => {
+        selects.push(tl);
+        if (selectOk) selTlang = tl;
+        return selectOk;
+      },
+    }));
+    load(s, ['yk-autodrive.js']);
+    const ad_ = di.resolve('autodrive');
+    const TRACK = { languageCode: 'en' };
+    return {
+      ad: ad_, selects, cur,
+      drive: () => ad_.drive(TRACK, 'en'),
+      arrive: (k) => pool.add(k),
+      setSel: (v) => { selTlang = v; },
+      setVid: (v) => { vid = v; },
+      setSelectOk: (v) => { selectOk = v; },
+      setAd: (v) => { ad = v; },
+    };
+  }
+
+  test('驅動鏈：先原文、原文到貨才切譯文、譯文到貨即 done（此後不再驅動）', () => {
+    const c = setup();
+    c.drive();
+    expect(c.selects).toEqual(['']); // 先選原文（直選譯文不會載原文 body）
+    c.drive();
+    expect(c.selects).toEqual(['']); // 原文 body 未到：等待，不重複驅動
+    c.arrive('');
+    c.drive();
+    expect(c.selects).toEqual(['', 'zh-Hant']); // 到貨 → 切譯文
+    c.arrive('zh-Hant');
+    c.drive();
+    c.drive();
+    expect(c.selects).toEqual(['', 'zh-Hant']); // done：one-shot，穩態不再驅動
+  });
+
+  test('reset() re-arm：done 後播放器選軌被重設，reset 才會重新驅動（same-video 回歸）', () => {
+    const c = setup();
+    c.arrive('');
+    c.arrive('zh-Hant');
+    c.drive(); // start：兩 body 都在但不在目標上 → 直接切譯文
+    c.drive(); // trans + haveTrans → done
+    expect(c.selects).toEqual(['zh-Hant']);
+    c.setSel(null); // 模擬導離再導回：播放器把選軌重設（字幕關了），vid 沒變
+    c.drive();
+    expect(c.selects).toEqual(['zh-Hant']); // 陰性對照：不 reset → 卡在 done 不驅動
+    c.ad.reset(); // engine.teardown 的通知
+    c.drive();
+    expect(c.selects).toEqual(['zh-Hant', 'zh-Hant']); // re-arm → 重新自動啟動
+  });
+
+  test('影片變更自動 re-arm（既有語義不受 reset 引入影響）', () => {
+    const c = setup();
+    c.arrive('');
+    c.arrive('zh-Hant');
+    c.drive();
+    c.drive(); // done
+    c.setVid('zzz'); // 換片（pool 快取跨片保留無妨：selection 是每片各自的）
+    c.setSel(null);
+    c.drive();
+    expect(c.selects).toEqual(['zh-Hant', 'zh-Hant']);
+  });
+
+  // ---- redrive（yk-native 的「切一遍」請求：重選當前變體一次）----
+  // 以下測項把 autoDualLang 關掉，隔離 serveRedrive（autoStart 的驅動鏈上面已測過）。
+
+  test('redrive：下一 drive 重選「當前」變體一次（＝強制重抓）；旗標清後不重複', () => {
+    const c = setup();
+    c.cur.autoDualLang = '';
+    c.setSel('zh-Hant'); // 播放器顯示中
+    c.ad.redrive();
+    c.drive();
+    expect(c.selects).toEqual(['zh-Hant']); // 重選當前變體，不是換軌
+    c.drive();
+    expect(c.selects).toEqual(['zh-Hant']); // 旗標已清：穩態不再動播放器
+  });
+
+  test('sel null（字幕沒開/使用者切走）→ 旗標作廢：絕不替使用者打開字幕', () => {
+    const c = setup();
+    c.cur.autoDualLang = '';
+    c.ad.redrive(); // sel 是 null
+    c.drive();
+    expect(c.selects).toEqual([]);
+    c.setSel('zh-Hant'); // 之後就算有選擇，舊旗標也已作廢
+    c.drive();
+    expect(c.selects).toEqual([]);
+  });
+
+  test('廣告中持旗不動；廣告後執行（廣告期間動選軌毫無意義）', () => {
+    const c = setup();
+    c.cur.autoDualLang = '';
+    c.setSel('zh-Hant');
+    c.setAd(true);
+    c.ad.redrive();
+    c.drive();
+    c.drive();
+    expect(c.selects).toEqual([]); // 廣告中：不動、也不作廢
+    c.setAd(false);
+    c.drive();
+    expect(c.selects).toEqual(['zh-Hant']); // 廣告後補執行
+  });
+
+  test('執行失敗（player 未 ready）→ 旗標留著逐 tick 重試到成功', () => {
+    const c = setup();
+    c.cur.autoDualLang = '';
+    c.setSel('zh-Hant');
+    c.setSelectOk(false);
+    c.ad.redrive();
+    c.drive();
+    c.drive();
+    expect(c.selects).toHaveLength(2); // 失敗：每 tick 重試
+    c.setSelectOk(true);
+    c.drive();
+    expect(c.selects).toHaveLength(3); // 成功 → 旗標清
+    c.drive();
+    expect(c.selects).toHaveLength(3);
+  });
+
+  test('reset()（teardown）連 redrive 旗標一起清：舊影片的請求絕不打到下一支影片', () => {
+    const c = setup();
+    c.cur.autoDualLang = '';
+    c.setSel('zh-Hant');
+    c.ad.redrive();
+    c.ad.reset();
+    c.drive();
+    expect(c.selects).toEqual([]);
   });
 });
 

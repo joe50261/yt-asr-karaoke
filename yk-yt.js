@@ -123,10 +123,14 @@
     // auto-caption; otherwise its auto-translation to `tlang`. setOption makes the
     // PLAYER fetch the body (its request carries the pot token) — we never fetch; the
     // capture hook grabs whatever the player fetched. This is a SINGLE step with no
-    // timing: the engine sequences original-then-translation, gating each call on the
-    // previous body actually being captured (see engine.maybeAutoDrive), so there is
-    // no guessed delay. Returns false when the player's caption API or the asr track
-    // isn't available yet (caller retries next tick); true once setOption succeeded.
+    // timing. Returns false when the player's caption API or the asr track isn't
+    // available yet (caller retries next tick); true once setOption succeeded.
+    //
+    // 實證（2026-07-02，真 youtube.com 三連對照）：任何 setOption 選軌——包括「同變體
+    // 原樣重選」與「切回幾秒前才顯示過的變體」——播放器一律真發 fresh timedtext 請求
+    // （請求本身帶 no-cache），**沒有**應用層快取直出。所以「強制重抓」＝重選當前變體
+    // 這一步就夠：不需要先關字幕再選回（OFF→ON）——舊版 refetchCaption 的空窗、重試鏈
+    // 與各式守門全是為不存在的快取行為服務的，已整組移除。
     function selectAsrVariant(track, tlang) {
       const player = getPlayerEl();
       if (!player?.setOption || !player?.getOption) return false;
@@ -162,53 +166,6 @@
       } catch {
         return false;
       }
-      return true;
-    }
-
-    // Force the player to RE-FETCH the asr variant `tlang` even though its body is already
-    // cached: turn captions OFF, then re-select. Re-selecting the SAME variant WITHOUT the
-    // off step is a no-op on YouTube's side (the player serves its cached body) — verified;
-    // the OFF→ON pair reliably issues a fresh timedtext XHR. This fresh fetch is what lets
-    // yk-native's transform (re)apply or be removed: native ON/OFF, single→dual upgrade, and
-    // settings-change re-cook all ride on it. The re-select is scheduled after a small gap so
-    // the OFF registers first. Used only by yk-native's edge machine; we never fetch here.
-    //
-    // The delayed ON step is guarded, because a bare setTimeout would mis-fire in three ways:
-    //  - SPA navigation during the gap → it would select the OLD video's variant on the NEW
-    //    video's player. Guard: snapshot the video id and bail if it changed.
-    //  - the user (or the player) picks a track during the gap → re-selecting would override
-    //    them. Guard: bail if a track with a languageCode is already displayed (our own OFF
-    //    step leaves an empty selection, so "non-empty" means someone else chose).
-    //  - selectAsrVariant transiently fails (tracklist mid-ad / player mid-swap) → captions
-    //    would be left OFF forever with no caller able to retry (the edge machine sees a null
-    //    selection and waits). Guard: bounded retries, same bail conditions each attempt.
-    const REFETCH_ON_GAP_MS = 120; // verified OFF→ON gap that reliably re-issues the XHR
-    const REFETCH_RETRY_MS = 240;
-    const REFETCH_MAX_TRIES = 25; // ~6s of retries, then give up (user can re-pick manually)
-    function refetchCaption(track, tlang) {
-      const player = getPlayerEl();
-      if (!player?.setOption) return false;
-      try {
-        player.setOption('captions', 'track', {});
-      } catch {
-        return false;
-      }
-      const vid = currentVideoId();
-      let tries = 0;
-      const reselect = () => {
-        if (currentVideoId() !== vid) return; // navigated away: never touch the new video
-        let cur = null;
-        try {
-          cur = getPlayerEl()?.getOption?.('captions', 'track') || null;
-        } catch {
-          /* player mid-swap: fall through and let selectAsrVariant retry */
-        }
-        if (cur && cur.languageCode) return; // someone already picked a track: stand down
-        if (!selectAsrVariant(track, tlang || '') && ++tries < REFETCH_MAX_TRIES) {
-          setTimeout(reselect, REFETCH_RETRY_MS);
-        }
-      };
-      setTimeout(reselect, REFETCH_ON_GAP_MS);
       return true;
     }
 
@@ -258,7 +215,6 @@
       pickAutoCaptionTrack,
       currentAsrSelection,
       selectAsrVariant,
-      refetchCaption,
       translationLanguages,
       waitForVideo,
       waitForPlayerResponse,

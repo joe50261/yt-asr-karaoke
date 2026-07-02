@@ -143,19 +143,24 @@
 
       function tick() {
         if (!state.active) return;
+        // SPA 導航窗口守門：點連結的瞬間 pushState 已把 URL 換走，但正式 teardown 要等
+        // yt-navigate-finish（新頁資料載完才發）——這幾百 ms 內 tick 仍在跑。此時絕不可
+        // 再驅動播放器：導航中播放器會重設字幕選軌，autodrive 會把它「掰回來」、syncEdge
+        // 會誤判 sel/sig 變更而下重抓單，都讓舊影片多發 timedtext（live 實證）。
+        // 只續排 rAF，等導航事件做正式收尾。
+        if (yt.currentVideoId() !== state.videoId) {
+          state.raf = requestAnimationFrame(tick);
+          return;
+        }
         const v = state.video || yt.getVideo();
         if (!v) {
           state.raf = requestAnimationFrame(tick);
           return;
         }
         state.video = v;
-        // Auto-translate (the auto-drive) lives in its own module (yk-autodrive) so it can be
-        // hot-swapped on its own; the engine feeds it the picked asr track each tick. Pause it
-        // during a native cache-bust's OFF→ON window so it can't re-select the cached variant
-        // and steal the fresh fetch the cook needs.
-        if (!native.inBustWindow()) {
-          autodrive.drive(state.track, state.trackLang);
-        }
+        // The ONE automatic caption driver (auto-start one-shot + native's fresh orders)
+        // lives in yk-autodrive; the engine just feeds it the picked asr track each tick.
+        autodrive.drive(state.track, state.trackLang);
         // Native mode's lifecycle (register/clear the cook + cache-bust on mode/selection/data
         // edges) lives in yk-native's edge machine; the engine only drives it each tick and
         // handles the ENTER edge's DOM handover (drop our overlay, un-hide the native caption).
@@ -266,6 +271,10 @@
         // false — on nav the next video fetches fresh anyway, and on hot-swap the incoming
         // instance re-cooks immediately (a restore would just double the refetch).
         native.standDown(restoreCaption);
+        // 任何 teardown = 這支影片的生命週期結束：re-arm autodrive 的 one-shot，讓
+        // same-video 回歸（導離再導回、Karaoke OFF→ON）重新自動啟動。tick 的導航
+        // 守門讓 drive 在離開後不再跑，autodrive 觀察不到「離開」，必須在此通知。
+        autodrive.reset();
         // NOTE: if auto-translate drove the player onto an asr translation (yk-autodrive
         // → yt.selectAsrVariant), we deliberately do NOT revert that caption selection here.
         // "We stand down; the user owns the player" — reverting would itself be an override.
