@@ -29,7 +29,7 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
 3. 要看翻譯，選**自動翻譯** → 目標語言
    （例如 `英文 (自動產生) >> 中文`）。覆蓋層切到該語言，仍然逐字。
 4. **Karaoke: ON/OFF** 按鈕（播放器右上角，滑鼠懸停顯示）切換覆蓋層。
-   狀態依瀏覽器記憶（`localStorage`）。
+   狀態與其他設定同路徑持久化（經 `bridge.js` 寫入 `chrome.storage`）。
 5. **調整字幕框寬度**：懸停覆蓋層、拖右緣把手（置中框對稱加寬/收窄，
    改變換行位置）；雙擊把手重設為貼合文字。依瀏覽器記憶。
 
@@ -132,13 +132,24 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   `document_start`；`bridge.js` 跑預設（隔離）world。要求 `storage` 權限
   （設定持久化）；不要求任何 host 權限。
 - `yk-di.js` —— DI 容器：`register` / `resolve` / `start` / 熱抽換。
-- `yk-config.js` —— ID、儲存鍵、時間常數、`CJK_RE`。
+- `yk-config.js` —— ID、儲存鍵、時間常數、`CJK_RE`，以及跨模組契約常數
+  （播放器宿主 selector 表、卡拉OK亮字金、字幕樣式 preset 值、寬度上限）——
+  同一條規則的 CSS 端與 JS 端都從這裡取值。
 - `yk-log.js` —— 帶標籤的 console logger。
-- `yk-settings.js` —— 設定中樞：持有即時的 `current`，由 `bridge.js` 轉送進來；
-  `apply()` 是唯一寫入路徑（就地改 `current` ＋ 轉送出去持久化）。
-- `yk-timing.js` —— 純函數的當前行/字狀態對映。
-- `yk-parse.js` —— 純函數的 json3 → 字 → 行（無 DOM、無狀態）。
-- `yk-yt.js` —— YouTube 播放器與 DOM 的無狀態 adapter。
+- `yk-settings.js` —— 設定中樞：持有即時的 `current`（含 Karaoke 主開關
+  `enabled`），由 `bridge.js` 轉送進來；`apply()` 是唯一寫入路徑（就地改
+  `current` ＋ 轉送出去持久化）。也持有雙軌顯示政策 `dualDisplayKeys`
+  （engine 的 bind 序與 yk-native 的列序同源）。
+- `yk-timing.js` —— 純函數的行/字狀態對映；行活躍窗（`lineWindow`）與字組
+  狀態切點（`wordStateBounds`）的唯一定義點——覆蓋層、側欄逐字稿、原生
+  煮字幕三個渲染面同源。
+- `yk-parse.js` —— 純函數的 json3 → 字 → 行（無 DOM、無狀態；`linesFromJson`
+  一步到位）。
+- `yk-yt.js` —— YouTube 播放器與 DOM 的無狀態 adapter（含 playerResponse →
+  字幕軌清單的唯一讀取點 `captionTracklist`）。
+- `yk-ui.js` —— player-chrome 共用 UI 機制：藥丸鈕掛載（`mountPillButton`，
+  Karaoke 開關 / ⚙ / 字幕全文三顆共用）與 pointer-capture 拖曳調寬
+  （`attachDragResize`，拖出視窗放開不會掛死）。
 - `yk-capture.js` —— `fetch`/XHR 攔截器。把**原始** asr timedtext body
   捕進池裡（經保存的原生 getter 讀取——與換給播放器的內容分屬兩條讀取
   路徑），並提供 transform 接縫（`registerTransform`/`clearTransform`，

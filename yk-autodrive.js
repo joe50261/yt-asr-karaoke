@@ -46,8 +46,8 @@
     // 一次性自動啟動鏈：至多驅動兩步（原文、然後譯文），完成即 'done'。
     function autoStart(track, trackLang, target) {
       if (!target || phase === 'done' || !track || yt.isAdShowing()) return;
-      const haveOrig = !!capture.capturedJsonForVariant(track, '');
-      const haveTrans = !!capture.capturedJsonForVariant(track, target);
+      const haveOrig = capture.hasCapturedVariant(track, '');
+      const haveTrans = capture.hasCapturedVariant(track, target);
       const sel = yt.currentAsrSelection(trackLang);
       const onTarget = !!sel && sel.tlang === target;
       switch (phase) {

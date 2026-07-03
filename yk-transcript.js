@@ -16,9 +16,11 @@
  */
 (function () {
   'use strict';
-  window.__YK__.register('transcript', ['config', 'settings', 'timing', 'yt'], (config, settings, timing, yt) => {
-    const { ROOT_ID, TRANSCRIPT_ID, TRANSCRIPT_BTN_ID, TRANSCRIPT_OPEN_KEY, TRANSCRIPT_WIDTH_KEY } =
-      config;
+  window.__YK__.register('transcript', ['config', 'settings', 'timing', 'yt', 'ui'], (config, settings, timing, yt, ui) => {
+    const {
+      ROOT_ID, TRANSCRIPT_ID, TRANSCRIPT_BTN_ID, TRANSCRIPT_OPEN_KEY, TRANSCRIPT_WIDTH_KEY,
+      TRANSCRIPT_MAX_WIDTH_FRAC,
+    } = config;
 
     let sig = null; // which variant(s) are built into the panel
     let byVariant = {}; // key -> [{ row, wordEls, line }] per line of that variant
@@ -62,23 +64,13 @@
       const native = !!settings.current.nativeMode;
       const host = native ? yt.getPlayerEl() : document.getElementById(ROOT_ID);
       if (!host) return;
-      let btn = document.getElementById(TRANSCRIPT_BTN_ID);
-      if (btn) {
-        if (btn.parentElement !== host) host.appendChild(btn); // appendChild moves the node
-        btn.dataset.host = native ? 'player' : 'box';
-        return;
-      }
-      btn = document.createElement('button');
-      btn.id = TRANSCRIPT_BTN_ID;
-      btn.type = 'button';
-      btn.textContent = '字幕全文';
-      btn.dataset.host = native ? 'player' : 'box';
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        setOpen(!isOpen());
+      const btn = ui.mountPillButton({
+        id: TRANSCRIPT_BTN_ID,
+        host,
+        text: '字幕全文',
+        onClick: () => setOpen(!isOpen()),
       });
-      host.appendChild(btn);
+      if (btn) btn.dataset.host = native ? 'player' : 'box';
     }
 
     function ensurePanel() {
@@ -116,35 +108,32 @@
     }
 
     // Drag the left edge to resize the panel width (it is anchored to the right).
+    // 拖曳生命週期在 yk-ui.attachDragResize；這裡只有本面板的幾何政策（右錨定、clamp）
+    // 與持久化。Double-click fits the panel width to its widest line.
     function addResizer(panel) {
       const grip = document.createElement('div');
       grip.className = 'ykt-resizer';
       let startX = 0;
       let startW = 0;
-      const onMove = (e) => {
-        const w = startW + (startX - e.clientX); // drag left => wider
-        panel.style.width = `${Math.min(window.innerWidth * 0.92, Math.max(220, w))}px`;
-      };
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-        try {
-          localStorage.setItem(TRANSCRIPT_WIDTH_KEY, panel.style.width);
-        } catch {
-          /* ignore */
-        }
-      };
-      grip.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        startX = e.clientX;
-        startW = panel.getBoundingClientRect().width;
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
-      });
-      // Double-click the grip to fit the panel width to its widest line.
-      grip.addEventListener('dblclick', (e) => {
-        e.preventDefault();
-        fitWidth(panel);
+      ui.attachDragResize(grip, {
+        onStart(e) {
+          startX = e.clientX;
+          startW = panel.getBoundingClientRect().width;
+        },
+        onFrame(e) {
+          const w = startW + (startX - e.clientX); // drag left => wider
+          panel.style.width = `${Math.min(window.innerWidth * TRANSCRIPT_MAX_WIDTH_FRAC, Math.max(220, w))}px`;
+        },
+        onCommit() {
+          try {
+            localStorage.setItem(TRANSCRIPT_WIDTH_KEY, panel.style.width);
+          } catch {
+            /* ignore */
+          }
+        },
+        onDblClick() {
+          fitWidth(panel);
+        },
       });
       panel.appendChild(grip);
     }
@@ -159,7 +148,7 @@
         row.style.whiteSpace = '';
       });
       // + horizontal padding/border of the body and a little slack for the scrollbar.
-      const w = Math.min(window.innerWidth * 0.92, Math.max(220, max + 36));
+      const w = Math.min(window.innerWidth * TRANSCRIPT_MAX_WIDTH_FRAC, Math.max(220, max + 36));
       panel.style.width = `${w}px`;
       try {
         localStorage.setItem(TRANSCRIPT_WIDTH_KEY, panel.style.width);

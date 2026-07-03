@@ -12,8 +12,9 @@
   'use strict';
 
   const DEFAULTS = {
+    enabled: true, // Karaoke 主開關（engine 的 toggle 經 settings.apply 寫入）
     dualTrack: false,
-    captionStyle: 'default',
+    captionStyle: 'default', // ISOLATED world 吃不到 DI，字面值與 yk-config 的 CAPTION_STYLE_DEFAULT 同值
     translationOnTop: false,
     autoDualLang: '',
     nativeMode: false,

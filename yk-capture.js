@@ -196,20 +196,31 @@
       tx.fn = null;
     }
 
-    // ONE variant of the asr track = this video + the asr language + the exact translation
-    // variant (tlang === '' is the original auto-caption). Pure URL-param match.
-    function variantUrlMatches(url, track, tlang, vid) {
+    // timedtext URL → 變體身分（v / lang / tlang 的唯一解碼點；'' = 原文，解不開回 null）。
+    // 池匹配（下方 variantUrlMatches）與 yk-native cook 的守門/dual 查找 key 都走這裡——
+    // 兩端各自解碼的話，匹配規則一改就對「同一變體」認定分家（dual 查池默默 miss）。
+    function variantFromUrl(url) {
       let u;
       try {
         u = new URL(url, location.origin);
       } catch {
-        return false;
+        return null;
       }
-      const urlVid = u.searchParams.get('v');
-      if (urlVid && urlVid !== vid) return false; // captured from another video (SPA nav)
-      const lang = u.searchParams.get('lang');
-      if (track.languageCode && lang && lang !== track.languageCode) return false;
-      return (u.searchParams.get('tlang') || '') === tlang;
+      return {
+        v: u.searchParams.get('v') || '',
+        lang: u.searchParams.get('lang') || '',
+        tlang: u.searchParams.get('tlang') || '',
+      };
+    }
+
+    // ONE variant of the asr track = this video + the asr language + the exact translation
+    // variant. v 缺席視為本影片（player 的請求一律帶 v，寬鬆分支屬防禦性）。
+    function variantUrlMatches(url, track, tlang, vid) {
+      const id = variantFromUrl(url);
+      if (!id) return false;
+      if (id.v && id.v !== vid) return false; // captured from another video (SPA nav)
+      if (track.languageCode && id.lang && id.lang !== track.languageCode) return false;
+      return id.tlang === tlang;
     }
 
     // Existence check WITHOUT parsing. The pool is validated on the way in (storeOriginal),
@@ -244,6 +255,7 @@
     // the newest resolve through __YK_NETIMPL__).
     return {
       install,
+      variantFromUrl,
       capturedJsonForVariant,
       hasCapturedVariant,
       registerTransform,

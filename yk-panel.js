@@ -24,7 +24,7 @@
  */
 (function () {
   'use strict';
-  window.__YK__.register('panel', ['config', 'settings', 'yt'], (config, settings, yt) => {
+  window.__YK__.register('panel', ['config', 'settings', 'yt', 'ui'], (config, settings, yt, ui) => {
     const { PANEL_ID, PANEL_BTN_ID } = config;
 
     // Stable control ids (MCP / tests target these). Namespaced so they can't collide
@@ -35,10 +35,12 @@
     const TRANSTOP_CHK = 'yk-set-transtop';
     const NATIVE_CHK = 'yk-set-native';
 
+    // preset 值引 config 契約（同一字串也在 yk-styles 的 [data-style] 選擇器與 overlay
+    // 分支）；中文標籤只在這裡。
     const STYLE_OPTS = [
-      ['default', '預設'],
-      ['yt', 'YT'],
-      ['advanced', '進階'],
+      [config.CAPTION_STYLE_DEFAULT, '預設'],
+      [config.CAPTION_STYLE_YT, 'YT'],
+      [config.CAPTION_STYLE_ADVANCED, '進階'],
     ];
 
     function isOpen() {
@@ -203,7 +205,7 @@
       const top = panel.querySelector('#' + TRANSTOP_CHK);
       if (nativeSw) nativeSw.checked = !!settings.current.nativeMode;
       if (styleSel) {
-        styleSel.value = settings.current.captionStyle || 'default';
+        styleSel.value = settings.current.captionStyle || config.CAPTION_STYLE_DEFAULT;
         // overlay-only control: freeze (don't clear) it while native mode owns rendering,
         // so the stored preset survives a round-trip through native mode untouched
         styleSel.disabled = !!settings.current.nativeMode;
@@ -216,20 +218,13 @@
     // Mount the ⚙ button on the player (idempotent). The engine calls this wherever it
     // ensures the Karaoke toggle, so the gear shares the toggle's lifetime / hover-reveal.
     function ensureButton() {
-      if (document.getElementById(PANEL_BTN_ID)) return;
-      const player = yt.getPlayerEl();
-      if (!player) return;
-      const btn = document.createElement('button');
-      btn.id = PANEL_BTN_ID;
-      btn.type = 'button';
-      btn.textContent = '⚙';
-      btn.setAttribute('aria-label', 'Karaoke settings');
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        setOpen(!isOpen());
+      ui.mountPillButton({
+        id: PANEL_BTN_ID,
+        host: yt.getPlayerEl(),
+        text: '⚙',
+        ariaLabel: 'Karaoke settings',
+        onClick: () => setOpen(!isOpen()),
       });
-      player.appendChild(btn);
     }
 
     function remove() {

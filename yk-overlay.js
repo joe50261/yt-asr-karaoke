@@ -16,8 +16,8 @@
  */
 (function () {
   'use strict';
-  window.__YK__.register('overlay', ['config', 'timing', 'settings', 'yt'], (config, timing, settings, yt) => {
-    const { ROOT_ID, OVERLAY_WIDTH_KEY } = config;
+  window.__YK__.register('overlay', ['config', 'timing', 'settings', 'yt', 'ui'], (config, timing, settings, yt, ui) => {
+    const { ROOT_ID, OVERLAY_WIDTH_KEY, OVERLAY_MAX_WIDTH_FRAC, CAPTION_STYLE_DEFAULT, CAPTION_STYLE_ADVANCED } = config;
 
     let rendered = []; // [{ lineEl, lineKey, wordEls }] aligned to binds, one row each
 
@@ -31,43 +31,39 @@
 
     // Drag the right-edge grip to set the caption box width (controls wrapping); the
     // centered box grows symmetrically. Double-click to reset to fit content. Width
-    // is a --yk-box-width CSS var on the overlay root, persisted.
+    // is a --yk-box-width CSS var on the overlay root, persisted. 拖曳生命週期在
+    // yk-ui.attachDragResize；這裡只有本面板的幾何政策（中心對稱、clamp）與持久化。
     function addOverlayResizer(root) {
       const grip = document.createElement('div');
       grip.className = 'yk-resizer';
       let centerX = 0;
       let maxW = 0;
-      const onMove = (e) => {
-        const w = Math.min(maxW, Math.max(120, (e.clientX - centerX) * 2));
-        root.style.setProperty('--yk-box-width', `${Math.round(w)}px`);
-      };
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-        try {
-          localStorage.setItem(OVERLAY_WIDTH_KEY, root.style.getPropertyValue('--yk-box-width'));
-        } catch {
-          /* ignore */
-        }
-      };
-      grip.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const pr = yt.getPlayerEl().getBoundingClientRect();
-        centerX = pr.left + pr.width / 2;
-        maxW = pr.width * 0.92;
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
-      });
-      grip.addEventListener('dblclick', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        root.style.removeProperty('--yk-box-width');
-        try {
-          localStorage.removeItem(OVERLAY_WIDTH_KEY);
-        } catch {
-          /* ignore */
-        }
+      ui.attachDragResize(grip, {
+        stopPropagation: true, // grip 在 player 上：不擋會冒泡成 seek/pause
+        onStart() {
+          const pr = yt.getPlayerEl().getBoundingClientRect();
+          centerX = pr.left + pr.width / 2;
+          maxW = pr.width * OVERLAY_MAX_WIDTH_FRAC;
+        },
+        onFrame(e) {
+          const w = Math.min(maxW, Math.max(120, (e.clientX - centerX) * 2));
+          root.style.setProperty('--yk-box-width', `${Math.round(w)}px`);
+        },
+        onCommit() {
+          try {
+            localStorage.setItem(OVERLAY_WIDTH_KEY, root.style.getPropertyValue('--yk-box-width'));
+          } catch {
+            /* ignore */
+          }
+        },
+        onDblClick() {
+          root.style.removeProperty('--yk-box-width');
+          try {
+            localStorage.removeItem(OVERLAY_WIDTH_KEY);
+          } catch {
+            /* ignore */
+          }
+        },
       });
       root.appendChild(grip);
     }
@@ -99,7 +95,7 @@
     // the engine forgot to invalidate after changing binds).
     function render(binds, t) {
       const root = ensure();
-      const style = settings.current.captionStyle || 'default';
+      const style = settings.current.captionStyle || CAPTION_STYLE_DEFAULT;
       if (root.dataset.style !== style) root.dataset.style = style;
       if (rendered.length !== binds.length) {
         rendered = binds.map(() => {
@@ -147,7 +143,7 @@
           if (el.className !== next) el.className = next;
           // Advanced style: fill the active word left-to-right over its spoken
           // duration (a true per-word sweep). --yk-fill is the gradient stop %.
-          if (style === 'advanced' && cls === 'active') {
+          if (style === CAPTION_STYLE_ADVANCED && cls === 'active') {
             const dur = Math.max(1, w.end - w.start);
             const pct = Math.max(0, Math.min(100, ((t - w.start) / dur) * 100));
             el.style.setProperty('--yk-fill', `${pct.toFixed(1)}%`);

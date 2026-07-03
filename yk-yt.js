@@ -7,7 +7,9 @@
  */
 (function () {
   'use strict';
-  window.__YK__.register('yt', [], () => {
+  window.__YK__.register('yt', ['config'], (config) => {
+    const { PLAYER_HOST_SELECTORS } = config;
+
     function currentVideoId() {
       try {
         return new URLSearchParams(location.search).get('v') || '';
@@ -21,31 +23,32 @@
     }
 
     function getPlayerResponse() {
-      return (
-        window.ytInitialPlayerResponse ||
-        document.querySelector('#movie_player')?.getPlayerResponse?.() ||
-        null
-      );
+      return window.ytInitialPlayerResponse || getPlayerEl()?.getPlayerResponse?.() || null;
+    }
+
+    // playerResponse → 字幕軌 tracklist（YT 內部形狀的唯一讀取點；waitForPlayerResponse
+    // 的就緒判定與 engine 的抽取同源——分兩份的話，YT 改鍵名時只修一份是無聲劣化：
+    // 一邊靜默停 idle，或一邊每支影片空等滿 timeout）。
+    function captionTracklist(pr) {
+      return pr?.captions?.playerCaptionsTracklistRenderer || null;
     }
 
     function getVideo() {
-      return (
-        document.querySelector('#movie_player video') ||
-        document.querySelector('video.html5-main-video')
-      );
+      return getPlayerEl()?.querySelector('video') || document.querySelector('video.html5-main-video');
     }
 
     function getPlayerEl() {
-      return (
-        document.querySelector('#movie_player') || document.querySelector('.html5-video-player')
-      );
+      for (const sel of PLAYER_HOST_SELECTORS) {
+        const el = document.querySelector(sel);
+        if (el) return el;
+      }
+      return null;
     }
 
     // True while YouTube is playing an ad: the player gains the `ad-showing`
     // class and the active <video> element is the ad, not the watch video.
     function isAdShowing() {
-      const player =
-        document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
+      const player = getPlayerEl();
       return !!player && player.classList.contains('ad-showing');
     }
 
@@ -191,7 +194,7 @@
         const start = Date.now();
         const id = setInterval(() => {
           const pr = getPlayerResponse();
-          const tracks = pr?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+          const tracks = captionTracklist(pr)?.captionTracks;
           if ((tracks && tracks.length) || Date.now() - start > limit || !isActive()) {
             clearInterval(id);
             resolve(pr);
@@ -204,6 +207,7 @@
       currentVideoId,
       isWatchPage,
       getPlayerResponse,
+      captionTracklist,
       getVideo,
       getPlayerEl,
       isAdShowing,

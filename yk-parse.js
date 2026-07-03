@@ -109,6 +109,12 @@
       return lines;
     }
 
-    return { captionJsonFromText, parseCaptionEvents, groupLines, needsBoundarySpace };
+    // json3 → lines 一步到位（模組職責「json3 → words → lines」的組合形；消費端一律走
+    // 這裡，分步匯出留給等價對照與 mock）。
+    function linesFromJson(json) {
+      return groupLines(parseCaptionEvents(json));
+    }
+
+    return { captionJsonFromText, parseCaptionEvents, groupLines, linesFromJson, needsBoundarySpace };
   });
 })();

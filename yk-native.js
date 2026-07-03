@@ -49,17 +49,18 @@
     'native',
     ['config', 'log', 'settings', 'yt', 'parse', 'timing', 'capture', 'autodrive'],
     (config, log, settings, yt, parse, timing, capture, autodrive) => {
-      const { LINE_LEAD_MS } = config;
+      const { KARAOKE_ACTIVE_RGB } = config;
 
       // Pen indices into the pens[] array built below (0 is the empty default pen).
       const PAST = 1;
       const ACTIVE = 2;
       const FUTURE = 3;
-      // Default palette mirrors the 'default' overlay look: dim-grey past, gold active,
-      // white future. Colours are INTEGER RGB fcForeColor values (see the header recipe).
+      // 亮字金取自 config（與 yk-styles 的 default/YT preset 同一正典值）。past/future 是
+      // pen 疊在 YT 字幕窗上的合成參數，覆蓋層（疊自帶暗盒）另有自己的值，不共享。
+      // Colours are INTEGER RGB fcForeColor values (see the header recipe).
       const DEFAULT_PENS = {
         past: { fcForeColor: 0x9aa0a6, foForeAlpha: 255 },
-        active: { fcForeColor: 0xffe566, foForeAlpha: 255 },
+        active: { fcForeColor: KARAOKE_ACTIVE_RGB, foForeAlpha: 255 },
         future: { fcForeColor: 0xffffff, foForeAlpha: 255 },
       };
       const TAIL_MS = 1200; // how long the last line lingers after its last word
@@ -71,32 +72,30 @@
       }
 
       // Expand ONE variant's lines into pop-on repaint events at window position `posId`. A line
-      // is shown over [line.start - LEAD, nextLine.start - LEAD) (matching timing.findActiveLine's
-      // contiguous activation), and within that one event per state-change boundary repaints the
-      // full line with each word's pen from timing.wordState. Each event is a STANDALONE cue
-      // (it carries wpWinPosId + wsWinStyleId itself; there is NO persistent window-defining event
-      // and NO wWinId). That is what makes the renderer REPLACE in place: the cues are contiguous
-      // and non-overlapping in time, so exactly one shows at a time and the previous clears. A
-      // shared persistent window (the roll-up pattern: one window-def + wWinId) instead ACCUMULATES
-      // every repaint into a growing pile over continuous full-video playback (the stacking bug).
+      // is shown over timing.lineWindow's activation window, and within that one event per
+      // state-change boundary repaints the full line with each word's pen from timing.wordState.
+      // Each event is a STANDALONE cue (it carries wpWinPosId + wsWinStyleId itself; there is NO
+      // persistent window-defining event and NO wWinId). That is what makes the renderer REPLACE
+      // in place: the cues are contiguous and non-overlapping in time, so exactly one shows at a
+      // time and the previous clears. A shared persistent window (the roll-up pattern: one
+      // window-def + wWinId) instead ACCUMULATES every repaint into a growing pile over
+      // continuous full-video playback (the stacking bug).
       function lineEventsForWindow(lines, posId) {
         const events = [];
         for (let li = 0; li < lines.length; li++) {
           const line = lines[li];
-          // Clamp to >=0 so a first line that starts within LINE_LEAD_MS of 0 can't produce a
-          // negative boundary — that would inflate the first event's duration (tStartMs floors
-          // to 0 while dDuration kept the negative offset) and yield two events at tStartMs 0,
-          // i.e. an ambiguous double-paint on the opening line.
-          const showStart = Math.max(0, line.start - LINE_LEAD_MS);
-          const showEnd =
-            li + 1 < lines.length ? Math.max(0, lines[li + 1].start - LINE_LEAD_MS) : line.end + TAIL_MS;
+          // json3 cue 的兩個專屬 clamp 疊在共享窗規則上：tStartMs 不可為負（負值使首行
+          // 膨脹成 0 起點雙事件、開頭雙重繪）→ clamp 到 0；末行（win.end null＝無界）
+          // cue 需有限時長 → 以 line.end + TAIL_MS 收尾。
+          const win = timing.lineWindow(lines, li);
+          const showStart = Math.max(0, win.start);
+          const showEnd = win.end === null ? line.end + TAIL_MS : Math.max(0, win.end);
           if (showEnd <= showStart) continue;
-          // Boundary times where ANY word changes state (wordState uses ±30ms), clipped to
+          // Boundary times where ANY word changes state (timing.wordStateBounds), clipped to
           // the visible window. Between consecutive boundaries the state vector is constant.
           const bounds = new Set([showStart]);
           for (const w of line.words) {
-            const a = w.start - 30;
-            const b = w.end + 30;
+            const [a, b] = timing.wordStateBounds(w);
             if (a > showStart && a < showEnd) bounds.add(a);
             if (b > showStart && b < showEnd) bounds.add(b);
           }
@@ -151,42 +150,37 @@
       const memo = new Map(); // url -> { sig, cooked }
       const MEMO_MAX = 8; // per-fetch URLs rotate (pot/expire), so cap instead of growing all session
 
-      function urlParam(url, name) {
-        try {
-          return new URL(url, location.origin).searchParams.get(name) || '';
-        } catch {
-          return '';
-        }
-      }
-
-      function linesFromJson(json) {
-        return parse.groupLines(parse.parseCaptionEvents(json));
+      // 「影響煮法輸出的設定位」唯一枚舉點：cook 的 memo 失效鍵與 sync 的切一遍簽名共用。
+      // 新增煮法設定只改這裡（漏 memo 端＝重讀回舊 body；漏 sync 端＝翻設定不切一遍）。
+      function cookSettingsBits() {
+        return `${settings.current.dualTrack ? 1 : 0}|${settings.current.translationOnTop ? 1 : 0}`;
       }
 
       // The transform: given the player's asr fetch URL + the ORIGINAL body, return the cooked
       // karaoke json3 (or the original unchanged when we should not cook). capture only calls
       // this for asr timedtext URLs. The player may read responseText/response several times,
-      // so the memo check comes BEFORE any body parse — the sig is built from URL params +
-      // settings + a parse-free pool existence check, making a memo hit O(1).
+      // so the memo check comes BEFORE any body parse — the sig is built from the URL's variant
+      // identity + settings + a parse-free pool existence check, making a memo hit O(1).
       function cook(url, originalText) {
         // Guards: cook only in native mode, and only bodies of the current video
         // (a transform can persist across SPA nav).
         if (!settings.current.nativeMode) return originalText;
-        const v = urlParam(url, 'v');
-        if (v && v !== yt.currentVideoId()) return originalText;
+        const id = capture.variantFromUrl(url);
+        if (!id) return originalText;
+        if (id.v && id.v !== yt.currentVideoId()) return originalText;
 
-        const tlang = urlParam(url, 'tlang');
-        const lang = urlParam(url, 'lang');
-        const dual = !!settings.current.dualTrack && tlang !== '';
+        const { tlang, lang } = id;
+        const wantKeys = settings.dualDisplayKeys(tlang);
+        const dual = wantKeys.length === 2;
         const haveOrig = dual && capture.hasCapturedVariant({ languageCode: lang }, '');
 
-        const sig = `${tlang}|${dual ? 1 : 0}|${settings.current.translationOnTop ? 1 : 0}|${haveOrig ? 1 : 0}`;
+        const sig = `${tlang}|${cookSettingsBits()}|${haveOrig ? 1 : 0}`;
         const cached = memo.get(url);
         if (cached && cached.sig === sig) return cached.cooked;
 
         const thisJson = parse.captionJsonFromText(originalText);
         if (!thisJson) return originalText;
-        const thisLines = linesFromJson(thisJson);
+        const thisLines = parse.linesFromJson(thisJson);
         if (!thisLines.length) return originalText;
 
         // hasCapturedVariant is presence-only; the parse can still miss (a pool entry written
@@ -194,11 +188,12 @@
         const origJson = haveOrig ? capture.capturedJsonForVariant({ languageCode: lang }, '') : null;
         let entries;
         if (dual && origJson) {
-          const origLines = linesFromJson(origJson);
-          const transEntry = { key: tlang, lines: thisLines };
-          const origEntry = { key: '', lines: origLines };
-          // Same ordering as engine.syncBinding: translationOnTop puts the translation on top.
-          entries = settings.current.translationOnTop ? [transEntry, origEntry] : [origEntry, transEntry];
+          // 列序照 dualDisplayKeys 的顯示序展開（與 engine.syncBinding 同一政策來源）。
+          const byKey = {
+            [tlang]: { key: tlang, lines: thisLines },
+            '': { key: '', lines: parse.linesFromJson(origJson) },
+          };
+          entries = wantKeys.map((k) => byKey[k]);
         } else {
           entries = [{ key: tlang, lines: thisLines }];
         }
@@ -251,11 +246,10 @@
         // 廣告期間不觀測：廣告下的畫面/選軌都不是主影片的事實。簽名比較是狀態性的，
         // 廣告結束後第一個 tick 自然補上，事件不會丟。
         if (yt.isAdShowing()) return;
-        // 只有會改變畫面上這份 body 的位才進簽名：native off 時 dual/top 是 inert
-        // （overlay 模式它們每幀即時生效，無需切一遍）。
-        const sig = native
-          ? `1|${settings.current.dualTrack ? 1 : 0}|${settings.current.translationOnTop ? 1 : 0}`
-          : '0';
+        // 只有會改變畫面上這份 body 的位才進簽名（cookSettingsBits，與 memo 失效同一
+        // 枚舉）：native off 時 dual/top 是 inert（overlay 模式它們每幀即時生效，無需
+        // 切一遍）。
+        const sig = native ? `1|${cookSettingsBits()}` : '0';
         if (prevSig === sig) return; // steady state
         if (prevSig === null) {
           prevSig = sig; // 首次觀察：進場不當場翻煮——player 進場自己的字幕 fetch 會被煮

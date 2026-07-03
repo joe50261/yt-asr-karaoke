@@ -15,9 +15,9 @@
   'use strict';
   window.__YK__.register(
     'engine',
-    ['config', 'log', 'settings', 'yt', 'capture', 'parse', 'styles', 'overlay', 'transcript', 'autodrive', 'native', 'panel'],
-    (config, log, settings, yt, capture, parse, styles, overlay, transcript, autodrive, native, panel) => {
-      const { TOGGLE_ID, ENABLED_KEY, ENGAGED_CLASS } = config;
+    ['config', 'log', 'settings', 'yt', 'capture', 'parse', 'styles', 'overlay', 'transcript', 'autodrive', 'native', 'panel', 'ui'],
+    (config, log, settings, yt, capture, parse, styles, overlay, transcript, autodrive, native, panel, ui) => {
+      const { TOGGLE_ID, ENGAGED_CLASS } = config;
 
       let state = freshLifecycle();
       let urlPollId = 0;
@@ -37,45 +37,44 @@
         };
       }
 
+      // 主開關住在 settings hub（與 nativeMode 同性質的行為開關；經 bridge 持久化，
+      // 面板/mock/他分頁都看得到）。缺值＝開。
       function isEnabled() {
-        try {
-          return localStorage.getItem(ENABLED_KEY) !== 'false';
-        } catch {
-          return true;
-        }
+        return settings.current.enabled !== false;
       }
 
-      function setEnabled(on) {
-        try {
-          localStorage.setItem(ENABLED_KEY, on ? 'true' : 'false');
-        } catch {
-          /* ignore */
+      // enabled 的單一反應路徑（邊緣偵測）：值變了 → 標籤對齊＋run()/teardown()。
+      // enabled 會從三個方向翻動——本地 click、bridge 遲到的 boot push、他分頁的
+      // onChanged 回聲——後兩者沒有本地 click 事件，靠 start() 的輪詢呼叫這裡。
+      // 沒有這條路徑，遠端 OFF→ON 無人重啟、標籤停在 OFF，之後點鈕會反向寫入 false。
+      let lastEnabled = null;
+      function watchEnabled() {
+        const on = isEnabled();
+        if (on === lastEnabled) return;
+        lastEnabled = on;
+        const toggle = document.getElementById(TOGGLE_ID);
+        if (toggle) {
+          toggle.dataset.on = String(on);
+          toggle.textContent = on ? 'Karaoke: ON' : 'Karaoke: OFF';
+        }
+        if (on) {
+          run();
+        } else {
+          teardown();
         }
       }
 
       function ensureToggle() {
-        if (document.getElementById(TOGGLE_ID)) return;
-        const player = yt.getPlayerEl();
-        if (!player) return;
-        const btn = document.createElement('button');
-        btn.id = TOGGLE_ID;
-        btn.type = 'button';
-        btn.dataset.on = String(isEnabled());
-        btn.textContent = isEnabled() ? 'Karaoke: ON' : 'Karaoke: OFF';
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          const next = !isEnabled();
-          setEnabled(next);
-          btn.dataset.on = String(next);
-          btn.textContent = next ? 'Karaoke: ON' : 'Karaoke: OFF';
-          if (next) {
-            run();
-          } else {
-            teardown();
-          }
+        const btn = ui.mountPillButton({
+          id: TOGGLE_ID,
+          host: yt.getPlayerEl(),
+          text: isEnabled() ? 'Karaoke: ON' : 'Karaoke: OFF',
+          onClick: () => {
+            settings.apply({ enabled: !isEnabled() });
+            watchEnabled();
+          },
         });
-        player.appendChild(btn);
+        if (btn) btn.dataset.on = String(isEnabled());
       }
 
       // Reactively bind to the variant(s) the player currently displays. Normally that
@@ -86,15 +85,9 @@
       function syncBinding() {
         const sel = yt.currentAsrSelection(state.trackLang);
         if (!sel) return false;
-        // In dual-track, order the stacked rows: original-then-translation by default,
-        // or translation-then-original when translationOnTop is set. The dual DISPLAY is
-        // owned solely by dualTrack — NOT by autoDualLang. autoDualLang only auto-STARTS
-        // (drives the player); dualTrack is independent (the user sets it in the menu).
-        // Turning autoDualLang back to 關閉 must do NOTHING to the display, so the display
-        // must not depend on it (else it would actively collapse dual→single on off, wrong).
-        const pair = settings.current.translationOnTop ? [sel.tlang, ''] : ['', sel.tlang];
-        const dual = settings.current.dualTrack;
-        const wantKeys = dual && sel.tlang ? pair : [sel.tlang];
+        // 變體集合與列序＝雙軌顯示政策（settings.dualDisplayKeys，native.cook 同源）
+        // 對當前選擇的展開。
+        const wantKeys = settings.dualDisplayKeys(sel.tlang);
         const sig = wantKeys.join('|');
         if (sig !== state.bindSig) {
           state.bindSig = sig;
@@ -108,7 +101,7 @@
             if (have.has(key)) continue;
             const json = capture.capturedJsonForVariant(state.track, key);
             if (!json) continue;
-            const lines = parse.groupLines(parse.parseCaptionEvents(json));
+            const lines = parse.linesFromJson(json);
             if (!lines.length) continue;
             state.bind.push({ key, lines });
           }
@@ -141,6 +134,12 @@
 
       function tick() {
         if (!state.active) return;
+        // enabled 由 bridge 異步送達：boot 可能先按預設 true 起跑。遲到的 enabled=false
+        // 在這裡（比 1s 輪詢快）收攤；watchEnabled 同時對齊標籤與基線。
+        if (!isEnabled()) {
+          watchEnabled();
+          return;
+        }
         // SPA 導航窗口守門：點連結的瞬間 pushState 已把 URL 換走，但正式 teardown 要等
         // yt-navigate-finish（新頁資料載完才發）——這幾百 ms 內 tick 仍在跑。此時不可
         // 再驅動播放器：導航中播放器會重設字幕選軌，autodrive 的 one-shot／redrive 旗標
@@ -207,7 +206,8 @@
         state.stage = 'player-response';
         const pr = await yt.waitForPlayerResponse(12000, () => state.active);
         if (!state.active) return;
-        const tracklist = pr?.captions?.playerCaptionsTracklistRenderer;
+        // YT 內部形狀只在 yk-yt 讀（與 waitForPlayerResponse 的就緒判定同一條路徑）。
+        const tracklist = yt.captionTracklist(pr);
         const tracks = tracklist?.captionTracks;
 
         state.stage = 'pick-track';
@@ -292,12 +292,16 @@
         window.addEventListener('yt-navigate-finish', onNavigate, true);
         window.addEventListener('yt-page-data-updated', onNavigate, true);
         lastUrl = location.href;
+        lastEnabled = isEnabled(); // 基線：初始 run/teardown 由 onNavigate 決定，這裡只記錄
         // Fallback: detect video id changes that did not emit a known event.
+        // 同一輪詢也守 enabled 邊緣（遠端 OFF→ON 的唯一重啟路徑；OFF 亦涵蓋
+        // 「init 早退、tick 不在跑」時遲到的關閉）。
         urlPollId = setInterval(() => {
           if (location.href !== lastUrl) {
             lastUrl = location.href;
             onNavigate();
           }
+          watchEnabled();
         }, 1000);
         // Initial attempt once the DOM is ready enough to host the overlay.
         if (document.readyState === 'loading') {

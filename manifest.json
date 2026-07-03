@@ -28,6 +28,7 @@
         "yk-timing.js",
         "yk-parse.js",
         "yk-yt.js",
+        "yk-ui.js",
         "yk-capture.js",
         "yk-styles.js",
         "yk-overlay.js",

@@ -19,7 +19,7 @@ function loadNative() {
 
 function linesFromFixture(parse, file) {
   const json = JSON.parse(fs.readFileSync(path.join(FIX, file), 'utf8'));
-  return parse.groupLines(parse.parseCaptionEvents(json));
+  return parse.linesFromJson(json);
 }
 
 describe('cookKaraoke — pure: parsed lines -> karaoke json3', () => {
@@ -180,9 +180,24 @@ describe('cook() — impure transform: 守門 / memo / dual 組裝（mock 注入
     );
     const pool = {}; // tlang -> 原始 body 字串（'' = 原文變體）
     const calls = { has: 0, get: 0 };
-    di.register('settings', [], () => ({ current }));
+    di.register('settings', [], () => ({
+      current,
+      // 契約替身：與 yk-settings.dualDisplayKeys 同約（政策本體在 feature.test.js 直測）
+      dualDisplayKeys: (tlang) =>
+        !current.dualTrack || !tlang ? [tlang] : current.translationOnTop ? [tlang, ''] : ['', tlang],
+    }));
     di.register('yt', [], () => ({ currentVideoId: () => 'abc' }));
     di.register('capture', [], () => ({
+      // 契約替身：與 yk-capture.variantFromUrl 同約（本體在下方 capture describe 直測）
+      variantFromUrl: (url) => {
+        let u;
+        try { u = new URL(url, 'https://www.youtube.com'); } catch { return null; }
+        return {
+          v: u.searchParams.get('v') || '',
+          lang: u.searchParams.get('lang') || '',
+          tlang: u.searchParams.get('tlang') || '',
+        };
+      },
       hasCapturedVariant: (_t, tl) => { calls.has++; return pool[tl] != null; },
       capturedJsonForVariant: (_t, tl) => {
         calls.get++;
@@ -265,6 +280,29 @@ describe('cook() — impure transform: 守門 / memo / dual 組裝（mock 注入
     pool[''] = enBody(); // 原文變體進池 → haveOrig 翻面
     const dual = JSON.parse(native.cook(ZH_URL, zhBody()));
     expect(dual.wpWinPositions).toHaveLength(3);
+  });
+});
+
+describe('yk-timing — 切點/行窗 API 與分類同源（yk-native 逐界重繪的前提）', () => {
+  test('wordStateBounds 的兩個切點正是 wordState 的翻面點', () => {
+    const { timing } = loadNative();
+    const w = { start: 1000, end: 2000 };
+    const [a, b] = timing.wordStateBounds(w);
+    expect(timing.wordState(w, a - 1)).toBe('future');
+    expect(timing.wordState(w, a)).toBe('active');
+    expect(timing.wordState(w, b - 1)).toBe('active');
+    expect(timing.wordState(w, b)).toBe('past');
+  });
+
+  test('lineWindow 與 findActiveLineIndex 同一條窗規則；末行無上界（end: null）', () => {
+    const { timing } = loadNative();
+    const lines = [{ start: 1000 }, { start: 3000 }];
+    const w0 = timing.lineWindow(lines, 0);
+    expect(timing.findActiveLineIndex(lines, w0.start - 1)).toBe(-1);
+    expect(timing.findActiveLineIndex(lines, w0.start)).toBe(0);
+    expect(timing.findActiveLineIndex(lines, w0.end - 1)).toBe(0);
+    expect(timing.findActiveLineIndex(lines, w0.end)).toBe(1);
+    expect(timing.lineWindow(lines, 1).end).toBeNull();
   });
 });
 
@@ -417,6 +455,13 @@ describe('yk-capture transform seam (real-getter fake XHR)', () => {
     xhr.__fireLoad(body); // simulate readyState 4 + 'load'
     return xhr;
   }
+
+  test('variantFromUrl：URL→變體身分的唯一解碼點（cook 守門與池匹配同源）', () => {
+    const { capture } = setup();
+    expect(capture.variantFromUrl(ASR_URL)).toEqual({ v: 'abc', lang: 'en', tlang: '' });
+    expect(capture.variantFromUrl(ASR_URL + '&tlang=zh-Hant').tlang).toBe('zh-Hant');
+    expect(capture.variantFromUrl('http://')).toBeNull(); // 解不開 → null，不猜
+  });
 
   test('no transform: the player reads the ORIGINAL and __YK_CAP__ stores the original', () => {
     const { s, CAP } = setup();

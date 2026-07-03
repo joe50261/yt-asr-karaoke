@@ -15,10 +15,13 @@
  */
 (function () {
   'use strict';
-  window.__YK__.register('settings', [], () => {
+  window.__YK__.register('settings', ['config'], (config) => {
     const current = {
+      // Karaoke 主開關。缺值＝開（COERCE 的 v !== false 同義）；engine 的 toggle 經
+      // apply() 寫、run()/tick 讀——與 nativeMode 同性質的行為開關，同走這個 hub。
+      enabled: true,
       dualTrack: false,
-      captionStyle: 'default',
+      captionStyle: config.CAPTION_STYLE_DEFAULT,
       translationOnTop: false,
       // '' = off; otherwise a translation target language code (e.g. 'zh-Hant').
       // When set, the engine auto-drives the player into dual-track for that language.
@@ -32,8 +35,9 @@
     // becomes a canonical `current` field. Shared by onMessage (full push from bridge)
     // and apply (partial write from the panel) so the two can never coerce differently.
     const COERCE = {
+      enabled: (v) => v !== false,
       dualTrack: (v) => !!v,
-      captionStyle: (v) => v || 'default',
+      captionStyle: (v) => v || config.CAPTION_STYLE_DEFAULT,
       translationOnTop: (v) => !!v,
       autoDualLang: (v) => v || '',
       nativeMode: (v) => !!v,
@@ -62,9 +66,19 @@
       if (Object.keys(out).length) window.postMessage({ __ykSettingsSet: true, settings: out }, '*');
     }
 
+    // 雙軌顯示政策的唯一定義點（engine.syncBinding 的 bind 序、native.cook 的 json3
+    // 列序都吃它）：選了譯文且 dualTrack 開才是雙軌；translationOnTop 把譯文排上列。
+    // autoDualLang 不參與——它只驅動選軌，顯示只看 dualTrack（關掉自動翻譯不得塌陷
+    // 雙語顯示）。回傳顯示序的變體 key（'' = 原文；entries[0] = 上列）。
+    function dualDisplayKeys(tlang) {
+      if (!current.dualTrack || !tlang) return [tlang];
+      return current.translationOnTop ? [tlang, ''] : ['', tlang];
+    }
+
     return {
       current,
       apply,
+      dualDisplayKeys,
       dispose() {
         window.removeEventListener('message', onMessage);
       },

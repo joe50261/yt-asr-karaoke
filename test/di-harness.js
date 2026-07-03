@@ -4,7 +4,7 @@
  * 功能驗證（settings.apply、yk-panel 投影/寫入、yk-yt runtime assert）已遷到 Jest
  * (`test/unit/feature.test.js`，注入 mock 隔離測)，本檔不再重證（避免重複）。
  *  A) 容器熱抽換的 dispose 順序（依賴者先）+ 重啟
- *  B) 14 模組全部 resolve、無循環/缺漏 dep
+ *  B) 15 模組全部 resolve、無循環/缺漏 dep
  *  C) 新 parse vs git HEAD 舊 content.js 在真實 fixtures 上逐行相同
  *  D) native dispose 卸下 capture transform（__YK_TX__.fn 清回 null）
  */
@@ -57,8 +57,8 @@ function load(sandbox, files) {
   }
 }
 
-const MODULES = ['yk-config.js','yk-log.js','yk-settings.js','yk-timing.js','yk-parse.js','yk-yt.js','yk-capture.js','yk-styles.js','yk-overlay.js','yk-transcript.js','yk-panel.js','yk-autodrive.js','yk-native.js','yk-engine.js'];
-const NAMES = ['config','log','settings','timing','parse','yt','capture','styles','overlay','transcript','panel','autodrive','native','engine'];
+const MODULES = ['yk-config.js','yk-log.js','yk-settings.js','yk-timing.js','yk-parse.js','yk-yt.js','yk-ui.js','yk-capture.js','yk-styles.js','yk-overlay.js','yk-transcript.js','yk-panel.js','yk-autodrive.js','yk-native.js','yk-engine.js'];
+const NAMES = ['config','log','settings','timing','parse','yt','ui','capture','styles','overlay','transcript','panel','autodrive','native','engine'];
 
 // ---------- A) 容器熱抽換 ----------
 (function partA() {
@@ -83,7 +83,7 @@ const NAMES = ['config','log','settings','timing','parse','yt','capture','styles
 // ---------- B) 全模組 resolve ----------
 let realParse = null;
 (function partB() {
-  console.log('\n== B) resolve all 14 modules ==');
+  console.log('\n== B) resolve all 15 modules ==');
   const s = makeSandbox();
   load(s, ['yk-di.js', ...MODULES]);
   const di = s.window.__YK__;

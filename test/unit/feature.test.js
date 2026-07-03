@@ -10,7 +10,7 @@ describe('yk-settings.apply — the one write path (mutate current + relay to br
     const s = makeSandbox();
     const posted = [];
     s.window.postMessage = (msg) => posted.push(msg);
-    load(s, ['yk-di.js', 'yk-settings.js']);
+    load(s, ['yk-di.js', 'yk-config.js', 'yk-settings.js']);
     return { settings: s.window.__YK__.resolve('settings'), posted };
   }
 
@@ -49,6 +49,26 @@ describe('yk-settings.apply — the one write path (mutate current + relay to br
     expect(sets[0].settings).toEqual({ dualTrack: true }); // bogus dropped
     expect(settings.current.bogus).toBeUndefined();
   });
+
+  test('enabled（Karaoke 主開關）走 hub：預設開，缺值正規化為開', () => {
+    const { settings } = setup();
+    expect(settings.current.enabled).toBe(true);
+    settings.apply({ enabled: false });
+    expect(settings.current.enabled).toBe(false);
+    settings.apply({ enabled: undefined }); // 缺值＝開（v !== false）
+    expect(settings.current.enabled).toBe(true);
+  });
+
+  test('dualDisplayKeys — 雙軌顯示政策的唯一定義點（engine bind 序與 native.cook 列序同源）', () => {
+    const { settings } = setup();
+    expect(settings.dualDisplayKeys('')).toEqual(['']); // 原文選擇永遠單列
+    expect(settings.dualDisplayKeys('zh-Hant')).toEqual(['zh-Hant']); // dualTrack 關：單列
+    settings.apply({ dualTrack: true });
+    expect(settings.dualDisplayKeys('zh-Hant')).toEqual(['', 'zh-Hant']); // 預設原文在上
+    settings.apply({ translationOnTop: true });
+    expect(settings.dualDisplayKeys('zh-Hant')).toEqual(['zh-Hant', '']); // 譯文在上
+    expect(settings.dualDisplayKeys('')).toEqual(['']); // dual 開但沒選譯文：仍單列
+  });
 });
 
 describe('yk-panel — in-page settings menu (mock-injected settings + yt)', () => {
@@ -59,7 +79,7 @@ describe('yk-panel — in-page settings menu (mock-injected settings + yt)', () 
     const player = dom.el('div');
     s.document.querySelector = (sel) =>
       sel === '#movie_player' || sel === '.html5-video-player' ? player : null;
-    load(s, ['yk-di.js', 'yk-config.js']);
+    load(s, ['yk-di.js', 'yk-config.js', 'yk-ui.js']);
     const di = s.window.__YK__;
     const applied = [];
     const current = Object.assign(
@@ -215,7 +235,7 @@ describe('yk-yt — runtime assert (mock player DOM)', () => {
       setOption: (_m, _k, v) => { lastSet = v; },
     };
     s.document.querySelector = (sel) => (sel === '#movie_player' || sel === '.html5-video-player' ? player : null);
-    load(s, ['yk-di.js', 'yk-yt.js']);
+    load(s, ['yk-di.js', 'yk-config.js', 'yk-yt.js']);
     return { yt: s.window.__YK__.resolve('yt'), get lastSet() { return lastSet; } };
   }
 
@@ -245,12 +265,21 @@ describe('yk-engine — tick 的 native 分支 / 導航守門 / teardown（全 m
     const rafQ = [];
     s.requestAnimationFrame = (fn) => { rafQ.push(fn); return rafQ.length; };
     s.cancelAnimationFrame = () => {};
+    const pollFns = []; // engine.start 的 1s 輪詢（URL fallback + enabled 邊緣）
+    s.setInterval = (fn) => { pollFns.push(fn); return 1; };
+    s.clearInterval = () => {};
     const player = dom.el('div');
     player.id = 'movie_player';
-    load(s, ['yk-di.js', 'yk-config.js', 'yk-log.js']);
+    load(s, ['yk-di.js', 'yk-config.js', 'yk-log.js', 'yk-ui.js']);
     const di = s.window.__YK__;
     const cur = { nativeMode: true, dualTrack: false, translationOnTop: false, autoDualLang: '' };
-    di.register('settings', [], () => ({ current: cur }));
+    di.register('settings', [], () => ({
+      current: cur,
+      apply: (p) => Object.assign(cur, p),
+      // 契約替身：與 yk-settings.dualDisplayKeys 同約（政策本體在上方 settings describe 直測）
+      dualDisplayKeys: (tlang) =>
+        !cur.dualTrack || !tlang ? [tlang] : cur.translationOnTop ? [tlang, ''] : ['', tlang],
+    }));
     const video = { currentTime: 5 };
     const track = { languageCode: 'en', kind: 'asr' };
     let vid = 'abc'; // 可變：導航窗口測試會把它換掉模擬 pushState 先行
@@ -263,6 +292,7 @@ describe('yk-engine — tick 的 native 分支 / 導航守門 / teardown（全 m
       currentAsrSelection: () => ({ tlang: '' }),
       waitForPlayerResponse: () =>
         Promise.resolve({ captions: { playerCaptionsTracklistRenderer: { captionTracks: [track] } } }),
+      captionTracklist: (pr) => pr?.captions?.playerCaptionsTracklistRenderer || null,
       pickAutoCaptionTrack: () => track,
       waitForVideo: () => Promise.resolve(video),
       translationLanguages: () => [],
@@ -274,8 +304,7 @@ describe('yk-engine — tick 的 native 分支 / 導航守門 / teardown（全 m
       registerTransform() {}, clearTransform() {},
     }));
     di.register('parse', [], () => ({
-      parseCaptionEvents: () => [{}],
-      groupLines: () => [{ start: 0, end: 1000, text: 'x', words: [] }],
+      linesFromJson: () => [{ start: 0, end: 1000, text: 'x', words: [] }],
     }));
     const calls = { render: 0, overlayRemove: 0, sync: 0, hide: 0, ensure: 0, drives: 0, nativeSyncs: 0, autodriveResets: 0, nativeResets: 0 };
     di.register('styles', [], () => ({ inject() {} }));
@@ -307,6 +336,7 @@ describe('yk-engine — tick 的 native 分支 / 導航守門 / teardown（全 m
       $: (id) => s.document.getElementById(id),
       settle: () => new Promise((r) => setImmediate(r)),
       tick: () => { const fn = rafQ.shift(); if (fn) fn(); },
+      poll: () => pollFns.forEach((f) => f()),
       setVid: (v) => { vid = v; },
     };
   }
@@ -360,6 +390,25 @@ describe('yk-engine — tick 的 native 分支 / 導航守門 / teardown（全 m
     expect(ctx.calls.nativeResets).toBe(before + 1);
   });
 
+  test('遠端翻 enabled（他分頁/bridge 遲到）：輪詢對齊標籤；OFF 收攤、ON 重啟', async () => {
+    const ctx = await setup();
+    await started(ctx);
+    ctx.tick();
+    // 遠端 OFF：沒有本地 click 事件——輪詢的 enabled 邊緣負責收攤＋標籤
+    ctx.cur.enabled = false;
+    const resetsBefore = ctx.calls.nativeResets;
+    ctx.poll();
+    expect(ctx.calls.nativeResets).toBe(resetsBefore + 1);
+    expect(ctx.$(ctx.config.TOGGLE_ID).textContent).toBe('Karaoke: OFF');
+    // 遠端 ON：唯一重啟路徑也在輪詢；標籤先對齊，之後的 click 才不會反向寫 false
+    ctx.cur.enabled = true;
+    ctx.poll();
+    expect(ctx.$(ctx.config.TOGGLE_ID).textContent).toBe('Karaoke: ON');
+    await ctx.settle();
+    await ctx.settle();
+    expect(ctx.rafQ.length).toBeGreaterThan(0); // 引擎重啟、render loop 重新排上
+  });
+
   test('導航窗口守門：URL 已換、teardown 未到 → tick 不驅動播放器，只續排 rAF', async () => {
     // 導航窗口的洩漏（見 yk-engine tick 頭註）：pushState 之後、yt-navigate-finish 之前
     // 的窗口內驅動 autodrive，會對舊影片重選、多發 timedtext。
@@ -402,7 +451,7 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
     di.register('settings', [], () => ({ current: cur }));
     const pool = new Set(); // 已捕獲的變體 key（'' = 原文）
     di.register('capture', [], () => ({
-      capturedJsonForVariant: (_t, k) => (pool.has(k) ? { events: [] } : null),
+      hasCapturedVariant: (_t, k) => pool.has(k), // autodrive 只問存在性（免 parse API）
     }));
     let vid = 'abc';
     let selTlang = null; // null = 未選任何 asr 變體
@@ -553,7 +602,7 @@ describe('yk-transcript — 字幕全文 button host (overlay box vs native play
     player.id = 'movie_player';
     const root = dom.el('div');
     root.id = 'yt-karaoke-root'; // the overlay box (config.ROOT_ID)
-    load(s, ['yk-di.js', 'yk-config.js', 'yk-timing.js']);
+    load(s, ['yk-di.js', 'yk-config.js', 'yk-timing.js', 'yk-ui.js']);
     const di = s.window.__YK__;
     const settings = { current: { nativeMode: false } };
     di.register('settings', [], () => settings);
