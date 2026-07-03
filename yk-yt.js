@@ -51,8 +51,8 @@
 
     // Identify the auto-generated (ASR) caption track for THIS video using only
     // video-intrinsic data (kind === 'asr'), never the user's caption/UI settings.
-    // We NEVER guess: if there is no ASR track, or multiple ASR tracks that cannot
-    // be disambiguated down to exactly one, return null (not found).
+    // If there is no ASR track, or several that cannot be disambiguated down to
+    // exactly one, return null (not found) rather than guessing.
     function pickAutoCaptionTrack(tracks, tracklist) {
       if (!tracks?.length) return null;
       const asrTracks = tracks.filter((t) => t.kind === 'asr');
@@ -78,8 +78,8 @@
 
     // The auto-translation languages YouTube offers for THIS player, normalized to
     // [{ code, name }]. This is YouTube's own runtime list (≈156, localized); the in-page
-    // settings menu (yk-panel) reads it live to build its Auto-translate menu, so the menu
-    // can never offer a code the player won't actually fetch. [] when the captions API
+    // settings menu (yk-panel) reads it live to build its Auto-translate menu, so its
+    // options are exactly what the player offers. [] when the captions API
     // isn't ready (the menu then shows 關閉 only until captions load).
     function translationLanguages() {
       const player = getPlayerEl();
@@ -121,16 +121,13 @@
 
     // Drive the player to display ONE asr variant: tlang === '' selects the original
     // auto-caption; otherwise its auto-translation to `tlang`. setOption makes the
-    // PLAYER fetch the body (its request carries the pot token) — we never fetch; the
-    // capture hook grabs whatever the player fetched. This is a SINGLE step with no
+    // PLAYER fetch the body (its request carries the pot token); the capture hook
+    // grabs what it fetched. This is a SINGLE step with no
     // timing. Returns false when the player's caption API or the asr track isn't
     // available yet (caller retries next tick); true once setOption succeeded.
     //
-    // 實證（2026-07-02，真 youtube.com 三連對照）：任何 setOption 選軌——包括「同變體
-    // 原樣重選」與「切回幾秒前才顯示過的變體」——播放器一律真發 fresh timedtext 請求
-    // （請求本身帶 no-cache），**沒有**應用層快取直出。所以「強制重抓」＝重選當前變體
-    // 這一步就夠：不需要先關字幕再選回（OFF→ON）——舊版 refetchCaption 的空窗、重試鏈
-    // 與各式守門全是為不存在的快取行為服務的，已整組移除。
+    // 播放器沒有應用層字幕快取：任何 setOption 選軌（含同變體原樣重選）都會讓
+    // 播放器重新請求 timedtext——「切一遍」（重選當前變體）就建立在這點上。
     function selectAsrVariant(track, tlang) {
       const player = getPlayerEl();
       if (!player?.setOption || !player?.getOption) return false;
@@ -146,11 +143,9 @@
       if (!asr) return false;
       let opt = asr;
       if (tlang) {
-        // Runtime assert: only drive to a translation YouTube actually offers, using the
-        // player's REAL translationLanguage object (never a fabricated one). Refuse —
-        // return false so the caller retries / stands down — when tlang isn't a real
-        // option (invalid/stale target, or the list isn't loaded yet), so a bogus code
-        // can never force a fetch for a language that doesn't exist.
+        // Drive only to a translation in the player's own translationLanguages list.
+        // When tlang isn't in it (invalid/stale target, or the list isn't loaded yet),
+        // return false so the caller retries.
         let tl;
         try {
           const tls = player.getOption('captions', 'translationLanguages');

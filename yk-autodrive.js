@@ -5,21 +5,20 @@
  *
  *  1. AUTO-START (the 自動翻譯 one-shot): setting the menu's target language drives the
  *     player ONCE onto the asr translation (original first, so dual-track has both
- *     bodies), then stands down at 'done'. Re-armed by a video change, a target change,
+ *     bodies), then stops at 'done'. Re-armed by a video change, a target change,
  *     or engine.teardown → reset() (the tick's navigation guard means drive() never runs
  *     off-video, so autodrive cannot observe "I left" on its own).
  *
  *  2. REDRIVE（切一遍）: yk-native calls redrive() when a cook-input setting flipped and
- *     the CURRENT caption must be re-fetched to take effect. Execution = RE-SELECTING the
- *     current variant, one step — live-verified (2026-07-02): ANY setOption selection
- *     issues a real fresh timedtext request (the player has no caption cache), which the
- *     capture seam then cooks (native on) or serves as the real body (native off — that
- *     IS the way out's restore). One boolean, no orders/windows/TTLs: a redrive is only
- *     requested when the on-screen body is KNOWN stale, so there is nothing to cancel.
+ *     the on-screen caption was cooked under the old settings. Execution = RE-SELECTING
+ *     the current variant, one step: any setOption selection makes the player issue a
+ *     fresh timedtext request (it has no caption cache), and the response passes the
+ *     capture seam under the new settings (cooked when a transform is registered,
+ *     unmodified otherwise). A boolean with no cancel path is enough.
  *
- * We never fetch: yt.selectAsrVariant uses the player's OWN setOption (the PLAYER
- * fetches, pot-gated). Every transition is gated on OBSERVED state — no timers at all;
- * the redrive flag is simply re-tried each tick until the player accepts it.
+ * All driving goes through yt.selectAsrVariant (the player's own setOption; the PLAYER
+ * fetches, pot-gated). Every transition is gated on OBSERVED state — no timers; the
+ * redrive flag is simply re-tried each tick until the player accepts it.
  */
 (function () {
   'use strict';
@@ -37,14 +36,14 @@
       if (!redriveWanted || !track || yt.isAdShowing()) return;
       const sel = yt.currentAsrSelection(trackLang);
       if (!sel) {
-        redriveWanted = false; // 沒顯示＝沒東西可切；絕不替使用者打開字幕
+        redriveWanted = false; // 字幕沒在顯示＝沒有過期的 body；重選反而會替使用者打開字幕
         return;
       }
-      // 重選當前變體＝強制重抓；失敗（player 未 ready）旗標留著，下一 tick 自然重試。
+      // 重選當前變體（切一遍本體）；失敗（player 未 ready）旗標留著，下一 tick 重試。
       if (yt.selectAsrVariant(track, sel.tlang)) redriveWanted = false;
     }
 
-    // 一次性自動啟動鏈：至多驅動兩步（原文、然後譯文），完成即 'done' 站開。
+    // 一次性自動啟動鏈：至多驅動兩步（原文、然後譯文），完成即 'done'。
     function autoStart(track, trackLang, target) {
       if (!target || phase === 'done' || !track || yt.isAdShowing()) return;
       const haveOrig = !!capture.capturedJsonForVariant(track, '');
@@ -66,7 +65,7 @@
         case 'orig': // waiting for the original's body before switching to the translation
           if (haveOrig && yt.selectAsrVariant(track, target)) phase = 'trans';
           break;
-        case 'trans': // waiting for the translation's body; then we are done (stand down)
+        case 'trans': // waiting for the translation's body; then we are done
           if (haveTrans) phase = 'done';
           break;
       }

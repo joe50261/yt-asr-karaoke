@@ -1,12 +1,12 @@
 /**
  * yk-capture — interception of the player's ASR timedtext response. Two jobs, kept
- * strictly separate so the second never corrupts the first:
+ * separate so the transform (job 2) cannot corrupt the pool (job 1):
  *
  *  1. CAPTURE (always, passive): store the ORIGINAL body the player fetched into
- *     window.__YK_CAP__. This is what the overlay / side-transcript / dual-track cook
- *     read, so it MUST always be the real body — never a cooked one. We read it via a
- *     native prototype getter snapshotted at resolve (NATIVE_RT), NOT via
- *     this.responseText, precisely because job 2 below shadows the instance getter.
+ *     window.__YK_CAP__ — the source data for the overlay / side-transcript /
+ *     dual-track cook. We read it via a native prototype getter snapshotted at resolve
+ *     (NATIVE_RT), NOT via this.responseText: job 2 below shadows the instance getter,
+ *     and the shadow returns the cooked body.
  *
  *  2. TRANSFORM (opt-in, for native playback mode): when a transform fn is registered
  *     (window.__YK_TX__.fn, set by yk-native), the PLAYER receives fn(url, original)
@@ -14,9 +14,9 @@
  *     renderer draws the karaoke. With NO transform registered (overlay mode) the
  *     player receives the original body byte-for-byte, so behaviour is unchanged.
  *
- * The three roles stay honest: the PLAYER fetches (its request carries a valid `pot`
- * token); we never fetch; we only CAPTURE the original and OPTIONALLY swap what the
- * player reads back. We still never drive the player from here.
+ * Division of labour: the PLAYER fetches (its request carries the `pot` token; a bare
+ * fetch of a timedtext URL gets an empty body). This module only captures and swaps
+ * bodies — track selection lives in yk-autodrive.
  *
  * Page-global contracts (names are read EXTERNALLY / must survive module re-resolve):
  *  - window.__YK_CAP__ : Map<url, ORIGINAL body>. PERSISTS across SPA navigations and
@@ -225,8 +225,8 @@
 
     // Locate + parse the captured body for ONE variant. Returns the json, or null if not
     // captured yet. An entry that fails the parse (only possible for pool contents written
-    // by a pre-validation version of this module) is skipped, NEVER logged — this runs in
-    // the per-frame render loop and any log would spam thousands of lines per video.
+    // by a pre-validation version of this module) is skipped silently — this runs in
+    // the per-frame render loop and a log here would spam thousands of lines per video.
     function capturedJsonForVariant(track, tlang) {
       const vid = yt.currentVideoId();
       for (const [url, text] of captured) {
@@ -238,9 +238,10 @@
       return null;
     }
 
-    // dispose clears the transform so a hot-swap never leaves a stale cook wired to the
-    // live XHR getters (the patch itself is one-shot via __YK_NET__ and intentionally
-    // stays; its behaviour follows the newest resolve through __YK_NETIMPL__).
+    // dispose clears the transform: the installed XHR getters are permanent, so a
+    // transform left behind would keep cooking after the module is gone (the patch
+    // itself is one-shot via __YK_NET__ and intentionally stays; its behaviour follows
+    // the newest resolve through __YK_NETIMPL__).
     return {
       install,
       capturedJsonForVariant,

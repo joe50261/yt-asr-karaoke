@@ -72,10 +72,7 @@
           if (next) {
             run();
           } else {
-            // The user turned Karaoke OFF while staying on the video: if native mode was
-            // cooking, the player must get the REAL body back (restoreCaption) — otherwise
-            // the already-delivered cooked track keeps rendering karaoke with us "off".
-            teardown({ restoreCaption: true });
+            teardown();
           }
         });
         player.appendChild(btn);
@@ -130,7 +127,8 @@
       }
 
       // Step aside: hand the caption area back to the player. Un-hide the native
-      // caption and clear our overlay so we NEVER leave a blank caption behind.
+      // caption and clear our overlay in the same step — un-hiding alone doubles the
+      // caption, clearing alone leaves a blank one.
       // transcript.hide() is SOFT (keeps built rows) so re-engaging after an ad reuses
       // them — paired with capture's persistent __YK_CAP__.
       function stepAside() {
@@ -144,10 +142,9 @@
       function tick() {
         if (!state.active) return;
         // SPA 導航窗口守門：點連結的瞬間 pushState 已把 URL 換走，但正式 teardown 要等
-        // yt-navigate-finish（新頁資料載完才發）——這幾百 ms 內 tick 仍在跑。此時絕不可
-        // 再驅動播放器：導航中播放器會重設字幕選軌，autodrive 會把它「掰回來」、syncEdge
-        // 會誤判 sel/sig 變更而下重抓單，都讓舊影片多發 timedtext（live 實證）。
-        // 只續排 rAF，等導航事件做正式收尾。
+        // yt-navigate-finish（新頁資料載完才發）——這幾百 ms 內 tick 仍在跑。此時不可
+        // 再驅動播放器：導航中播放器會重設字幕選軌，autodrive 的 one-shot／redrive 旗標
+        // 會對舊影片重選、多發 timedtext。只續排 rAF，等導航事件做正式收尾。
         if (yt.currentVideoId() !== state.videoId) {
           state.raf = requestAnimationFrame(tick);
           return;
@@ -158,14 +155,14 @@
           return;
         }
         state.video = v;
-        // The ONE automatic caption driver (auto-start one-shot + native's fresh orders)
-        // lives in yk-autodrive; the engine just feeds it the picked asr track each tick.
+        // The ONE automatic caption driver (auto-start one-shot + redrive) lives in
+        // yk-autodrive; the engine just feeds it the picked asr track each tick.
         autodrive.drive(state.track, state.trackLang);
-        // Native mode's lifecycle (register/clear the cook + cache-bust on mode/selection/data
-        // edges) lives in yk-native's edge machine; the engine only drives it each tick and
-        // handles the ENTER edge's DOM handover (drop our overlay, un-hide the native caption).
+        // Native mode's when-to-cook (register/clear the cook, settings-signature redrive)
+        // lives in yk-native.sync; the engine only calls it each tick and handles the
+        // switch-on DOM handover (drop our overlay, un-hide the native caption).
         const wasNativeOn = native.isOn();
-        native.syncEdge(state.track, state.trackLang);
+        native.sync(state.track);
         if (native.isOn() && !wasNativeOn) {
           overlay.remove(); // drop the self-drawn overlay; YT now draws the cooked caption
           yt.getPlayerEl()?.classList.remove(ENGAGED_CLASS); // un-hide the native caption
@@ -175,9 +172,9 @@
         // ORIGINAL captured body(ies); used by the overlay AND (in native mode) the transcript.
         const bound = !yt.isAdShowing() && syncBinding();
         if (native.isOn()) {
-          // Native mode: YouTube's own renderer draws the cooked karaoke — we never engage
-          // (the native caption must stay visible) and never draw the overlay. We only keep
-          // the side transcript in sync from the bound ORIGINAL lines.
+          // Native mode: YouTube's own renderer draws the cooked karaoke — the native
+          // caption stays visible (no engage) and the overlay stays empty; only the side
+          // transcript is kept in sync from the bound ORIGINAL lines.
           if (bound) {
             transcript.ensureToggle();
             transcript.sync(ms, state.bind);
@@ -235,11 +232,9 @@
       function run() {
         if (!yt.isWatchPage()) return;
         if (!isEnabled()) {
-          // Still show the toggle so the user can turn it back on. With Karaoke off we must
-          // not be cooking, so drop any registered transform + edge state too. No restore:
-          // this path is reached on load/navigation, where nothing cooked is on screen (the
-          // toggle-OFF click is the restoring path — see ensureToggle's handler).
-          native.standDown(false);
+          // Still show the toggle so the user can turn it back on. Karaoke off ⇒ no
+          // cooking: drop any registered transform.
+          native.reset();
           styles.inject();
           ensureToggle();
           panel.ensureButton();
@@ -260,26 +255,19 @@
         });
       }
 
-      function teardown({ restoreCaption = false } = {}) {
+      function teardown() {
         state.active = false;
         cancelAnimationFrame(state.raf);
-        yt.getPlayerEl()?.classList.remove(ENGAGED_CLASS); // restore the native caption
-        // Always drop the native cook so a cooked transform never leaks across SPA nav,
-        // Karaoke-OFF, or a hot-swap (it would otherwise cook the next video's fetch).
-        // restoreCaption=true (the Karaoke-OFF click, same video) additionally makes the
-        // player re-fetch the REAL body it is still displaying; nav/hot-swap paths pass
-        // false — on nav the next video fetches fresh anyway, and on hot-swap the incoming
-        // instance re-cooks immediately (a restore would just double the refetch).
-        native.standDown(restoreCaption);
+        yt.getPlayerEl()?.classList.remove(ENGAGED_CLASS); // un-hide the native caption
+        // A transform left registered would cook the next video's request.
+        native.reset();
         // 任何 teardown = 這支影片的生命週期結束：re-arm autodrive 的 one-shot，讓
         // same-video 回歸（導離再導回、Karaoke OFF→ON）重新自動啟動。tick 的導航
         // 守門讓 drive 在離開後不再跑，autodrive 觀察不到「離開」，必須在此通知。
         autodrive.reset();
-        // NOTE: if auto-translate drove the player onto an asr translation (yk-autodrive
-        // → yt.selectAsrVariant), we deliberately do NOT revert that caption selection here.
-        // "We stand down; the user owns the player" — reverting would itself be an override.
-        // So this one player-side mutation is intentionally left in place (like __YK_CAP__'s
-        // persistence, yk-capture.js), and is the one global side effect dispose does not unwind.
+        // Caption-track selection (autodrive → yt.selectAsrVariant) is player-side state:
+        // teardown does not track or touch it — the one global side effect dispose leaves
+        // in place (like __YK_CAP__'s persistence, yk-capture.js).
         transcript.reset();
         overlay.remove();
         const toggle = document.getElementById(TOGGLE_ID);

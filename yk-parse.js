@@ -1,8 +1,7 @@
 /**
  * yk-parse — pure json3 → words → lines. NO DOM, NO state. This logic is mirrored
  * by extension/test/fixtures/_analyze.py; keep it byte-for-byte identical in
- * behaviour or the fixtures stop aligning. Real per-word timing only — never
- * interpolated.
+ * behaviour or the fixtures stop aligning.
  */
 (function () {
   'use strict';
@@ -30,12 +29,12 @@
           if (!text) continue;
           if (text === '\n') {
             // The caption data's OWN line break (a standalone \n segment). Mark the
-            // last word as a line end so groupLines breaks where the source intends
-            // (semantic), instead of us re-chunking arbitrarily.
+            // last word as a line end so groupLines breaks here.
             if (words.length) words[words.length - 1].breakAfter = true;
             continue;
           }
-          // Real per-word offset only — never interpolated.
+          // A seg with no tOffsetMs starts at the event base (line-level timing);
+          // no position is invented for it.
           const start = base + (seg.tOffsetMs || 0);
           words.push({ text, start, end: blockEnd, breakAfter: false });
         }
@@ -64,9 +63,9 @@
 
     function groupLines(words) {
       if (!words.length) return [];
-      // If the captions carry their own \n line structure (almost always), break ONLY
-      // there. Long lines wrap via CSS — no word-count cap (it chopped dense CJK lines
-      // mid-phrase). The gap fallback is used only when there is no \n structure at all.
+      // Break rules: (1) the data's own \n marks; (2) a speaker change (">>");
+      // (3) only when the track has no \n marks at all — a time gap between words
+      // longer than LINE_BREAK_GAP_MS. No word-count cap; long lines wrap via CSS.
       const hasDataBreaks = words.some((w) => w.breakAfter);
       const lines = [];
       let current = { words: [], start: words[0].start, end: words[0].end };
@@ -81,15 +80,13 @@
       for (let i = 0; i < words.length; i++) {
         const w = words[i];
         const prev = current.words[current.words.length - 1];
-        // Break where the caption DATA breaks — its own \n line structure (set on the
-        // previous word during parse): the source's semantic lines.
+        // Rule (1): breakAfter was set during parse on the word before a \n seg.
         const dataBreak = !!prev?.breakAfter;
-        // YouTube/CEA captions use ">>" to mark a change of speaker (">>>" for a
-        // change of topic). Force a new line at it so speakers don't run together.
+        // Rule (2): YouTube/CEA captions mark a change of speaker with ">>"
+        // (">>>" a change of topic).
         const speakerBreak = /^\s*>>/.test(w.text);
-        // Fallback for captions with NO \n structure: break on a speech pause so the
-        // whole video isn't one line. Never used when \n breaks exist (it would chop
-        // a semantic line mid-phrase).
+        // Rule (3): no \n structure anywhere → a gap > LINE_BREAK_GAP_MS breaks the
+        // line (a pause inside a semantic \n line is not a boundary).
         const gapBreak = !hasDataBreaks && prev && w.start - prev.end > LINE_BREAK_GAP_MS;
 
         if (current.words.length && (dataBreak || speakerBreak || gapBreak)) {

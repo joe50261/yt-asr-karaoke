@@ -15,9 +15,9 @@
  * nothing to style when YouTube's own renderer draws the caption — README documents the
  * preset as overlay-only) — it never writes captionStyle.
  *
- * The Auto-translate menu is built from yt.translationLanguages() — YouTube's REAL runtime
- * list — read live each time the panel opens (no hardcoded language knowledge, and the menu
- * can never offer a code the player won't fetch). Before the player has loaded captions the
+ * The Auto-translate menu is built from yt.translationLanguages() — YouTube's own runtime
+ * list — read live each time the panel opens (no hardcoded language knowledge; the options
+ * are exactly what the player offers). Before the player has loaded captions the
  * list is empty, so the menu is just 關閉 until then; reopening it once captions load fills it.
  *
  * Trusted Types: createElement/textContent/replaceChildren only — no innerHTML.
@@ -105,8 +105,7 @@
 
     // Rebuild the Auto-translate menu from YouTube's live runtime list (關閉 + each
     // language). Re-selects `selected`; if it is no longer offered (or the list isn't
-    // loaded yet) the <select> lands on the empty 關閉 option — a stale target is never
-    // left silently selected, mirroring the old popup's renderLangs.
+    // loaded yet) the <select> lands on the empty 關閉 option.
     function fillLangOptions(sel, selected) {
       const frag = [];
       const off = document.createElement('option');

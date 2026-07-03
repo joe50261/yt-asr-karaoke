@@ -4,42 +4,43 @@
  * Instead of self-drawing an overlay (yk-overlay) over a hidden native caption, this mode
  * HIJACKS the player's timedtext response: at the moment the player fetches the asr body,
  * we COOK a karaoke-styled json3 and swap it in (via yk-capture's transform seam), then hand
- * it back so YouTube's OWN caption renderer draws the per-word highlight. We never fetch and
- * never draw; the player renders everything.
+ * it back so YouTube's OWN caption renderer draws the per-word highlight. The player does
+ * all fetching and rendering; this module only computes the replacement body.
  *
  * The module owns THREE layers, all unit-testable through DI mocks:
  *  - cookKaraoke(entries, opts): a PURE function (parsed lines -> json3 string). No url, no
  *    capture, no DOM — testable with the engine's own [{key,lines}] bind shape as input.
  *  - cook(url, originalText): the impure transform handed to capture. It parses the body,
  *    looks up the OTHER variant for dual-track, and calls cookKaraoke. Memoized per fetch.
- *  - the EDGE MACHINE (syncEdge/standDown/isOn): the native-mode lifecycle.
- *    It lives HERE (not in the engine) so the whole feature — cook + when-to-cook — is one
- *    independently hot-swappable unit, and so the state machine is reachable by unit tests
- *    (mock settings/yt/capture in, drive syncEdge, assert refetch calls). The engine only
- *    calls syncEdge each tick, standDown on teardown, and branches its render on isOn().
+ *  - sync/reset/isOn: when-to-cook. sync() keeps the transform registration and a settings
+ *    signature in step with settings each tick; reset() zeroes that state. It lives HERE
+ *    (not in the engine) so the whole feature — cook + when-to-cook — is one independently
+ *    hot-swappable unit reachable by unit tests (mock settings/yt/capture in, drive sync,
+ *    assert redrive calls). The engine only calls sync each tick, reset on teardown, and
+ *    branches its render on isOn().
  *
- * Mode-edge key idea（核心就兩件事：劫持＋切一遍）: the transform sits on the capture seam
- * and cooks WHATEVER the player fetches — and the player fetches on every selection and every
- * video/variant load (live-verified 2026-07-02: ANY setOption selection issues a real fresh
- * request; there is NO player-side caption cache). So native mode mostly just… happens: page
- * load, SPA nav, autodrive's own drive, a user track switch — each produces a fetch that the
- * registered cook transforms. The ONLY thing that needs an explicit push is a SETTINGS flip
- * while a caption is already on screen (nativeMode on/off, dual/top while on): the on-screen
- * body is then KNOWN stale, so we ask autodrive (the ONE driver — we never touch selection
- * ourselves) to redrive: re-select the current variant once → fresh fetch → cooked (or, with
- * the transform just cleared, the REAL body — that is also how turning native off restores).
- * State: `on` + one settings signature. No selection tracking, no pool latching, no orders.
+ * 核心就兩件事——劫持＋切一遍: the transform sits on the capture seam and cooks WHATEVER
+ * passes it — and the player issues its own timedtext request on every selection and every
+ * video/variant load (any setOption selection issues a fresh request; the player has no
+ * caption cache). So native mode mostly just… happens: page load, SPA nav, autodrive's own
+ * drive, a user track switch — each produces a request whose response the registered cook
+ * transforms. The ONLY thing that needs an explicit push is a SETTINGS flip while a caption
+ * is already on screen (nativeMode on/off, dual/top while on): the on-screen body was cooked
+ * under the old settings, so we ask autodrive (track selection stays its job) to redrive:
+ * re-select the current variant once → the player issues a fresh request → the response
+ * passes the seam under the new settings (cooked, or unmodified once the transform is
+ * cleared). State: `on` + one settings signature.
  *
- * The json3 recipe is LIVE-VERIFIED (see memory native-json3-karaoke-cook-recipe):
+ * json3 recipe constraints (what the player's renderer accepts):
  *  - each repaint event is a STANDALONE pop-on cue (wsWinStyles {juJustifCode:2}, NO sdScrollDir;
  *    the cue self-positions via wpWinPosId — there is NO persistent window-def event and NO wWinId).
  *    Contiguous, non-overlapping cues REPLACE in place; a shared persistent window (window-def +
  *    wWinId) instead ROLLS UP — over full-video playback every repaint piles into a growing stack;
  *  - per word-onset a repaint event repaints the whole line, the active word's seg using the
- *    ACTIVE pen, earlier words PAST, later FUTURE — word state via timing.wordState so native,
- *    overlay and the side transcript can never disagree on what's active;
+ *    ACTIVE pen, earlier words PAST, later FUTURE — word state via timing.wordState, the
+ *    same definition of "active" the overlay and the side transcript use;
  *  - pen colour fcForeColor is an INTEGER RGB (a "#hex" string makes the player DROP the event);
- *  - dual-track = two window POSITIONS (distinct wpWinPosId / avVerPos), verified to render as two
+ *  - dual-track = two window POSITIONS (distinct wpWinPosId / avVerPos) rendering as two
  *    independent moving-highlight rows, no cross-wipe.
  */
 (function () {
@@ -55,14 +56,14 @@
       const ACTIVE = 2;
       const FUTURE = 3;
       // Default palette mirrors the 'default' overlay look: dim-grey past, gold active,
-      // white future. Colours are INTEGER RGB (fcForeColor) — the live-verified requirement.
+      // white future. Colours are INTEGER RGB fcForeColor values (see the header recipe).
       const DEFAULT_PENS = {
         past: { fcForeColor: 0x9aa0a6, foForeAlpha: 255 },
         active: { fcForeColor: 0xffe566, foForeAlpha: 255 },
         future: { fcForeColor: 0xffffff, foForeAlpha: 255 },
       };
       const TAIL_MS = 1200; // how long the last line lingers after its last word
-      const ROW_GAP = 14; // avVerPos gap between stacked dual-track rows (verified clean at 14)
+      const ROW_GAP = 14; // avVerPos gap between stacked dual-track rows
       const BOTTOM_AV = 90; // bottom row vertical position (% from top, apPoint:7 bottom anchor)
 
       function penIdForState(s) {
@@ -168,8 +169,8 @@
       // so the memo check comes BEFORE any body parse — the sig is built from URL params +
       // settings + a parse-free pool existence check, making a memo hit O(1).
       function cook(url, originalText) {
-        // Defensive no-ops: only cook in native mode, and never cook a body that belongs
-        // to a different video (a transform can persist across SPA nav).
+        // Guards: cook only in native mode, and only bodies of the current video
+        // (a transform can persist across SPA nav).
         if (!settings.current.nativeMode) return originalText;
         const v = urlParam(url, 'v');
         if (v && v !== yt.currentVideoId()) return originalText;
@@ -221,60 +222,37 @@
         memo.clear();
       }
 
-      // ---- the mode edge（極簡：on 旗標＋一個設定簽名）----
+      // ---- 掛/卸同步（on 旗標＋一個設定簽名）----
       let on = false; // transform registered?
-      let prevSig = null; // null = 首次觀察：只初始化不 redrive（進場靠 player 的自然 fetch 生效）
-      let lastTrack = null; // standDown 還原用（teardown 呼叫時 engine 已不再傳參）
-      let lastTrackLang = '';
+      let prevSig = null; // null = 首次觀察：只初始化不 redrive（進場字幕來自 player 自己的請求）
 
       function isOn() {
         return on;
       }
 
-      // Leave native mode. restore=true additionally un-cooks what the player is DISPLAYING:
-      // the transform is already cleared, so ONE re-select of the current variant makes the
-      // player fetch (always a real request — no player cache, live-verified) and render the
-      // REAL body. If the user has meanwhile switched away themselves (sel null and NOT an ad
-      // — ads report a null selection without the user having done anything), we deliberately
-      // do nothing: the cooked body is not on screen, and re-selecting would override them.
-      function standDown(restore) {
-        const wasOn = on;
+      // 狀態歸零：卸 transform、清簽名（engine teardown 與 hot-swap dispose 同一路徑）。
+      function reset() {
         on = false;
         disable();
-        if (restore && wasOn && lastTrack) {
-          const sel = yt.currentAsrSelection(lastTrackLang);
-          // 廣告中 sel 恆 null——那不是「使用者切走」：盡力還原到原文變體（優於把 cooked
-          // 殘留留在快取軌上；廣告中 tracklist 可能為空 → 失敗走同一條 warn 路徑）。
-          const tl = sel ? sel.tlang : yt.isAdShowing() ? '' : null;
-          if (tl != null && !yt.selectAsrVariant(lastTrack, tl)) {
-            // One-shot path (teardown): no tick will retry, so surface it instead of
-            // silently leaving the cooked caption on screen.
-            log.warn('native restore re-select failed; the player may keep the cooked caption');
-          }
-        }
         prevSig = null;
-        lastTrack = null;
-        lastTrackLang = '';
       }
 
-      // Per-tick mode-edge driver：劫持的掛/卸＋「設定簽名變了就切一遍」。
-      function syncEdge(track, trackLang) {
+      // 每 tick 同步：設定 → transform 掛/卸；設定簽名變了就切一遍。
+      function sync(track) {
         const native = !!settings.current.nativeMode;
         if (native && !on) {
           on = true;
           enable();
         } else if (!native && on) {
           on = false;
-          disable(); // transform 先卸：redrive 抓回來的就是真身——這就是關閉的當場還原
+          disable();
         }
-        lastTrack = track || null;
-        lastTrackLang = trackLang || '';
         if (!track) return;
         // 廣告期間不觀測：廣告下的畫面/選軌都不是主影片的事實。簽名比較是狀態性的，
         // 廣告結束後第一個 tick 自然補上，事件不會丟。
         if (yt.isAdShowing()) return;
         // 只有會改變畫面上這份 body 的位才進簽名：native off 時 dual/top 是 inert
-        // （overlay 模式它們每幀即時生效，無需 re-fetch）。
+        // （overlay 模式它們每幀即時生效，無需切一遍）。
         const sig = native
           ? `1|${settings.current.dualTrack ? 1 : 0}|${settings.current.translationOnTop ? 1 : 0}`
           : '0';
@@ -284,9 +262,9 @@
           return;
         }
         prevSig = sig;
-        // 使用者當場翻了設定：畫面上的 body 確定過期 → 請 driver 切一遍（重選當前變體
-        // → player 必發 fresh fetch → 被煮或還原真身）。選擇變更根本不觀測：player 對
-        // 新選擇自己會抓，自然被煮。
+        // 使用者當場翻了設定：畫面上的 body 是按舊設定煮的 → 請 driver 切一遍（重選
+        // 當前變體，player 自己重新請求，回應按新設定過 seam）。選軌變更不在此觀測：
+        // player 對新選擇自己會請求，回應照樣過 seam。
         autodrive.redrive();
       }
 
@@ -295,13 +273,13 @@
         cook,
         enable,
         disable,
-        syncEdge,
-        standDown,
+        sync,
+        reset,
         isOn,
-        // hot-swap: drop the transform + edge state so a stale cook never lingers. No restore:
-        // the incoming instance re-enters via syncEdge next tick; a recipe change shows on the
-        // next natural fetch (or nudge autodrive.redrive() by hand from the MCP session).
-        dispose: () => standDown(false),
+        // hot-swap: a transform left behind would keep cooking with the outgoing code.
+        // The incoming instance re-registers via sync next tick; a recipe change shows on
+        // the player's next request (or nudge autodrive.redrive() from the MCP session).
+        dispose: reset,
       };
     },
   );

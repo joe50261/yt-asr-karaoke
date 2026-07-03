@@ -6,7 +6,7 @@
  *  A) 容器熱抽換的 dispose 順序（依賴者先）+ 重啟
  *  B) 14 模組全部 resolve、無循環/缺漏 dep
  *  C) 新 parse vs git HEAD 舊 content.js 在真實 fixtures 上逐行相同
- *  D) native dispose 還原 capture transform seam（__YK_TX__.fn 清回 null）
+ *  D) native dispose 卸下 capture transform（__YK_TX__.fn 清回 null）
  */
 const fs = require('fs');
 const vm = require('vm');
