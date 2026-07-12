@@ -139,7 +139,10 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
 - `yk-config.js` —— ID、儲存鍵、時間常數、`CJK_RE`，以及跨模組契約常數
   （播放器宿主 selector 表、卡拉OK亮字金、字幕樣式 preset 值、寬度上限）——
   同一條規則的 CSS 端與 JS 端都從這裡取值。
-- `yk-log.js` —— 帶標籤的 console logger。
+- `yk-log.js` —— 帶標籤的 console logger；也持有**變體 log 標籤**的唯一
+  定義點（`variant()`：原文 `en`、翻譯 `en→zh-Hant`）——engine 的
+  binding/bound 與 yk-autodrive 的 select/drift/stall 同用，同一變體在
+  log 裡只有一種寫法。
 - `yk-settings.js` —— 設定中樞：持有即時的 `current`（含 Karaoke 主開關
   `enabled`），由 `bridge.js` 轉送進來；`apply()` 是唯一寫入路徑（就地改
   `current` ＋ 轉送出去持久化）。也持有雙軌顯示政策 `dualDisplayKeys`

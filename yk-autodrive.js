@@ -36,8 +36,9 @@
  * 不構成對戰使用者）。計的是 rAF tick 數不是牆鐘（本模組不設計時器），額度與 nudge
  * 共用 MAX_NUDGES。
  *
- * Log 紀律：只在「動作邊緣」記（每次 select、相位轉移、re-arm、redrive 執行），每行
- * 帶 v=<影片id>——drive() 每 tick 都跑，穩態必須零輸出。
+ * Log 紀律：只在「動作邊緣」記（每次 select、步驟推進、re-arm、redrive 執行），每行
+ * 帶 v=<影片id>——drive() 每 tick 都跑，穩態必須零輸出。變體一律用 log.variant 的
+ * 統一標籤（原文 'en'、翻譯 'en→zh-Hant'）；內部相位名（orig/trans）不出現在 log。
  */
 (function () {
   'use strict';
@@ -66,20 +67,20 @@
       // 重選當前變體（切一遍本體）；失敗（player 未 ready）旗標留著，下一 tick 重試。
       if (yt.selectAsrVariant(track, sel.tlang)) {
         redriveWanted = false;
-        log.info('autodrive', 'v=' + vid, 'redrive: re-selected current variant', sel.tlang || '(original)');
+        log.info('autodrive', 'v=' + vid, 'redrive: re-selected', log.variant(trackLang, sel.tlang));
       }
     }
 
     // 漂移重選一步（見頭註）。回 true = 本 tick 已發出重選。
-    function nudge(track, tlang, phaseLabel) {
+    function nudge(track, trackLang, tlang) {
       if (nudges >= MAX_NUDGES) return false; // 超限：停手，穩態安靜
       if (!yt.selectAsrVariant(track, tlang)) return false; // player 未 ready：下 tick 再試，不計次
       nudges++;
       stall = 0; // 剛發出新 fetch：卡等計數重新起算
       log.warn(
         'autodrive', 'v=' + vid,
-        phaseLabel + ': selection drifted before body arrived — re-selected',
-        tlang || '(original)', '(' + nudges + '/' + MAX_NUDGES + ')',
+        'drift: player left', log.variant(trackLang, tlang),
+        'before its body arrived — re-selected it', '(' + nudges + '/' + MAX_NUDGES + ')',
       );
       if (nudges === MAX_NUDGES) {
         log.warn('autodrive', 'v=' + vid, 'nudge budget exhausted — no more re-selects this one-shot');
@@ -89,15 +90,16 @@
 
     // 卡等重踢一步（見頭註）：人在變體上、body 空等 STALL_TICKS 個 tick → 重選同一
     // 變體重發 fetch。過門檻後 select 失敗（player 未 ready）不歸零，下 tick 續試。
-    function stallRekick(track, tlang, phaseLabel) {
+    function stallRekick(track, trackLang, tlang) {
       if (++stall < STALL_TICKS || nudges >= MAX_NUDGES) return;
       if (!yt.selectAsrVariant(track, tlang)) return;
       nudges++;
       stall = 0;
       log.warn(
         'autodrive', 'v=' + vid,
-        phaseLabel + ': body still missing while on-variant — re-kicked the fetch by re-selecting',
-        tlang || '(original)', '(' + nudges + '/' + MAX_NUDGES + ')',
+        'stall:', log.variant(trackLang, tlang),
+        'selected but its body never arrived — re-selected to re-issue the fetch',
+        '(' + nudges + '/' + MAX_NUDGES + ')',
       );
     }
 
@@ -108,6 +110,9 @@
       const haveTrans = capture.hasCapturedVariant(track, target);
       const sel = yt.currentAsrSelection(trackLang);
       const onTarget = !!sel && sel.tlang === target;
+      // log 一律用統一變體標籤（log.variant：原文 'en'、翻譯 'en→zh-Hant'），步驟寫成
+      // step 1/2、step 2/2、done——內部相位名（orig/trans）不出現在 log，讀的人不需要
+      // 知道狀態機才看得懂。
       switch (phase) {
         case 'start':
           // 'start' always drives toward the target (even if both bodies are already
@@ -116,15 +121,15 @@
             if (yt.selectAsrVariant(track, '')) {
               phase = 'orig'; // original first (translation-direct never loads it)
               stall = 0;
-              log.info('autodrive', 'v=' + vid, 'start→orig: selected original — waiting for its body');
+              log.info('autodrive', 'v=' + vid, 'step 1/2: select', log.variant(trackLang, ''), '— waiting for its body');
             }
           } else if (onTarget && haveTrans) {
             phase = 'done'; // already there (player on target, both loaded)
-            log.info('autodrive', 'v=' + vid, 'start→done: already on target', target, 'with both bodies');
+            log.info('autodrive', 'v=' + vid, 'done: already on', log.variant(trackLang, target), 'with both bodies');
           } else if (yt.selectAsrVariant(track, target)) {
             phase = 'trans';
             stall = 0;
-            log.info('autodrive', 'v=' + vid, 'start→trans: selected translation', target);
+            log.info('autodrive', 'v=' + vid, 'step 2/2: select', log.variant(trackLang, target), '(', log.variant(trackLang, ''), 'body already pooled )');
           }
           break;
         case 'orig': // waiting for the original's body before switching to the translation
@@ -132,23 +137,23 @@
             if (yt.selectAsrVariant(track, target)) {
               phase = 'trans';
               stall = 0;
-              log.info('autodrive', 'v=' + vid, 'orig→trans: original captured — selected translation', target);
+              log.info('autodrive', 'v=' + vid, 'step 2/2:', log.variant(trackLang, ''), 'body captured — select', log.variant(trackLang, target));
             }
           } else if (!sel || sel.tlang !== '') {
-            nudge(track, '', 'orig'); // 播放器把原文選擇丟了、body 還沒來 → 重選
+            nudge(track, trackLang, ''); // 播放器把原文選擇丟了、body 還沒來 → 重選
           } else {
-            stallRekick(track, '', 'orig'); // 人在原文上、body 遲遲不到 → fetch 可能已死
+            stallRekick(track, trackLang, ''); // 人在原文上、body 遲遲不到 → fetch 可能已死
           }
           break;
         case 'trans': // waiting for the translation's body AND the player holding the target
           if (haveTrans && onTarget) {
             phase = 'done';
             stall = 0;
-            log.info('autodrive', 'v=' + vid, 'trans→done: translation', target, 'captured and selected');
+            log.info('autodrive', 'v=' + vid, 'done:', log.variant(trackLang, target), 'captured and selected');
           } else if (!onTarget) {
-            nudge(track, target, 'trans'); // 掉軌（body 可能已在池中）→ 重選，不提前收 done
+            nudge(track, trackLang, target); // 掉軌（body 可能已在池中）→ 重選，不提前收 done
           } else {
-            stallRekick(track, target, 'trans'); // 人在目標上、body 遲遲不到 → fetch 可能已死
+            stallRekick(track, trackLang, target); // 人在目標上、body 遲遲不到 → fetch 可能已死
           }
           break;
       }
@@ -167,7 +172,7 @@
         phase = 'start';
         nudges = 0;
         stall = 0;
-        if (target) log.info('autodrive', 'v=' + vid, 're-armed: driving toward', target);
+        if (target) log.info('autodrive', 'v=' + vid, 'armed: will drive to', log.variant(trackLang, target));
       }
       autoStart(track, trackLang, target);
       serveRedrive(track, trackLang);

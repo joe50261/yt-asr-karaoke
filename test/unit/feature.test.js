@@ -593,6 +593,7 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
       info: (...a) => logCalls.push(a),
       warn: (...a) => logCalls.push(a),
       error: (...a) => logCalls.push(a),
+      variant: (lang, tlang) => (tlang ? lang + '→' + tlang : lang), // 與 yk-log 同約（標籤本體不入約）
     }));
     const cur = { autoDualLang: 'zh-Hant' };
     di.register('settings', [], () => ({ current: cur }));

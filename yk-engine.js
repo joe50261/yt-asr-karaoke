@@ -108,7 +108,7 @@
           if (state.bind.length > before) {
             state.bind.sort((a, b) => wantKeys.indexOf(a.key) - wantKeys.indexOf(b.key));
             overlay.invalidate(); // order/count changed → rebuild rows
-            log.info('engine', 'v=' + state.videoId, 'bound:', state.bind.map((b) => b.key || state.trackLang).join(' + '));
+            log.info('engine', 'v=' + state.videoId, 'bound:', state.bind.map((b) => log.variant(state.trackLang, b.key)).join(' + '));
           }
         }
         return state.bind.length > 0;
@@ -232,7 +232,16 @@
         }
         state.track = track;
         state.trackLang = track.languageCode || '';
-        log.info('engine', 'v=' + state.videoId, 'binding to track:', track.name?.simpleText || state.trackLang, track.kind);
+        // binding 行是這支影片「要勾住什麼」的完整宣告：asr 軌（統一變體標籤＋人類可讀
+        // 名稱一次）＋自動翻譯要驅動到的目標——少了目標，讀 log 的人不知道 autodrive
+        // 接下來的 select 是誰交辦的。
+        const target = settings.current.autoDualLang;
+        log.info(
+          'engine', 'v=' + state.videoId,
+          'binding: asr track', log.variant(state.trackLang, ''),
+          '("' + (track.name?.simpleText || state.trackLang) + '")',
+          target ? '— auto-translate: ' + log.variant(state.trackLang, target) : '— auto-translate: off',
+        );
 
         state.stage = 'wait-video';
         state.video = await yt.waitForVideo(() => state.active);
