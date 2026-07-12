@@ -108,7 +108,7 @@
           if (state.bind.length > before) {
             state.bind.sort((a, b) => wantKeys.indexOf(a.key) - wantKeys.indexOf(b.key));
             overlay.invalidate(); // order/count changed → rebuild rows
-            log.info('Bound:', state.bind.map((b) => b.key || state.trackLang).join(' + '));
+            log.info('engine', 'v=' + state.videoId, 'bound:', state.bind.map((b) => b.key || state.trackLang).join(' + '));
           }
         }
         return state.bind.length > 0;
@@ -202,6 +202,7 @@
         ensureToggle();
         panel.ensureButton(); // the ⚙ settings menu shares the toggle's lifetime/hover-reveal
         state.videoId = yt.currentVideoId();
+        log.info('engine', 'v=' + state.videoId, 'init: waiting for player response');
 
         state.stage = 'player-response';
         const pr = await yt.waitForPlayerResponse(12000, () => state.active);
@@ -213,10 +214,25 @@
         state.stage = 'pick-track';
         const track = yt.pickAutoCaptionTrack(tracks, tracklist);
         // No asr track on this video → nothing to bind to. Stay idle; not an error.
-        if (!track) return;
+        // 但要說清楚是「這支影片」為何 idle——三種原因（response 等不到／沒字幕軌／
+        // asr 軌不唯一）對使用者看起來都一樣是「沒動」，log 不分影片不分原因就無從查。
+        if (!track) {
+          log.info(
+            'engine', 'v=' + state.videoId,
+            !pr ? 'idle: player response not ready before timeout'
+              : !tracks?.length ? 'idle: video has no caption tracks'
+                : 'idle: no unambiguous asr track among ' + tracks.length + ' tracks',
+          );
+          // 逾時（pr 根本沒等到）≠ 這支影片沒字幕：資料晚到時 yt-navigate-finish/
+          // yt-page-data-updated 還會再來，active 留 true 會被 run() 的同影片守門
+          // early-return 永遠擋住（「導航沒觸發」的殘餘通道）。放掉 active 讓下一個
+          // 導航事件重新 init；真的沒字幕軌（pr 在手）才維持 idle latch，不空轉。
+          if (!pr) state.active = false;
+          return;
+        }
         state.track = track;
         state.trackLang = track.languageCode || '';
-        log.info('Binding to track:', track.name?.simpleText || state.trackLang, track.kind);
+        log.info('engine', 'v=' + state.videoId, 'binding to track:', track.name?.simpleText || state.trackLang, track.kind);
 
         state.stage = 'wait-video';
         state.video = await yt.waitForVideo(() => state.active);
@@ -250,12 +266,15 @@
             message: String(err && err.message ? err.message : err),
             bound: state.bind.length,
           };
-          log.error('failed at stage', state.stage, err);
+          log.error('engine', 'v=' + state.videoId, 'failed at stage', state.stage, err);
           state.active = false;
         });
       }
 
       function teardown() {
+        // 只有真的有生命週期可收（videoId 已設）才記——run() 每次都先呼叫 teardown，
+        // 全新 state 的空收攤不記，log 才不會出現無主的 teardown 行。
+        if (state.videoId) log.info('engine', 'v=' + state.videoId, 'teardown');
         state.active = false;
         cancelAnimationFrame(state.raf);
         yt.getPlayerEl()?.classList.remove(ENGAGED_CLASS); // un-hide the native caption
