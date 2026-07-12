@@ -20,6 +20,9 @@
   };
   player.setOption = () => {};
   player.getPlayerResponse = () => ({
+    // videoDetails 必填：yk-yt.getPlayerResponse 以 videoId 對 URL 驗明正身
+    //（真 YouTube 的 response 一定帶；缺了會被當導航殘留拒用）。
+    videoDetails: { videoId: 'stub' },
     captions: { playerCaptionsTracklistRenderer: { captionTracks: [ASR] } },
   });
   window.ytInitialPlayerResponse = player.getPlayerResponse();

@@ -22,8 +22,29 @@
       return location.pathname === '/watch' && !!currentVideoId();
     }
 
+    // playerResponse 有兩個候選來源：window.ytInitialPlayerResponse（整頁載入時由 inline
+    // script 設定，SPA 導航後「不會」更新——它一直是上一次整頁載入那支影片的殭屍）與播放器
+    // 自己的 getPlayerResponse()（導航後隨新頁資料就緒）。兩者都以 videoDetails.videoId 對
+    // 當前 URL 驗明正身，不合就不用——寧可回 null 讓 waitForPlayerResponse 繼續等，也不能
+    // 拿舊影片的 tracklist 綁軌：那會鎖在舊語言上，selectAsrVariant 永遠找不到軌，自動翻譯
+    // 在導航後整個不啟動（或反向：舊影片沒字幕 → 空等滿 timeout 停 idle）。
     function getPlayerResponse() {
-      return window.ytInitialPlayerResponse || getPlayerEl()?.getPlayerResponse?.() || null;
+      const vid = currentVideoId();
+      const forThisVideo = (pr) => (!!pr && pr.videoDetails?.videoId === vid ? pr : null);
+      let live = null;
+      try {
+        live = forThisVideo(getPlayerEl()?.getPlayerResponse?.());
+      } catch {
+        live = null;
+      }
+      const initial = forThisVideo(window.ytInitialPlayerResponse);
+      // 兩份都是本影片時以 live 為準（導航後它跟著播放器走）；唯一例外：live 還沒長出
+      // 字幕清單而 initial 已有——身分相同下取「就緒」的那份，waitForPlayerResponse
+      // 才不會盯著半熟的 live 空等到 timeout。
+      if (live && initial && !captionTracklist(live)?.captionTracks?.length && captionTracklist(initial)?.captionTracks?.length) {
+        return initial;
+      }
+      return live || initial;
     }
 
     // playerResponse → 字幕軌 tracklist（YT 內部形狀的唯一讀取點；waitForPlayerResponse
@@ -191,11 +212,22 @@
     function waitForPlayerResponse(timeoutMs, isActive) {
       const limit = typeof timeoutMs === 'number' ? timeoutMs : 12000;
       return new Promise((resolve) => {
-        const start = Date.now();
+        let start = Date.now();
         const id = setInterval(() => {
           const pr = getPlayerResponse();
           const tracks = captionTracklist(pr)?.captionTracks;
-          if ((tracks && tracks.length) || Date.now() - start > limit || !isActive()) {
+          if ((tracks && tracks.length) || !isActive()) {
+            clearInterval(id);
+            resolve(pr);
+            return;
+          }
+          // 廣告中不計時（前貼廣告可長於 limit，且廣告期間播放器的 response 未必屬於
+          // 主影片）：計時照走會把「有字幕的影片」誤判成 idle，且 init 不重試。
+          if (isAdShowing()) {
+            start = Date.now();
+            return;
+          }
+          if (Date.now() - start > limit) {
             clearInterval(id);
             resolve(pr);
           }

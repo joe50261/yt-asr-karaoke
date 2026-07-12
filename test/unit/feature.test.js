@@ -257,6 +257,125 @@ describe('yk-yt — runtime assert (mock player DOM)', () => {
   });
 });
 
+describe('yk-yt — getPlayerResponse 驗影片身分（SPA 導航的殭屍 ytInitialPlayerResponse）', () => {
+  // location 固定在 ?v=abc（makeSandbox）——候選 response 以 videoDetails.videoId 對 URL。
+  function ytWithResponses({ initial, live, hasPlayer = true } = {}) {
+    const s = makeSandbox();
+    if (initial !== undefined) s.window.ytInitialPlayerResponse = initial;
+    const player = {
+      getPlayerResponse: () => (typeof live === 'function' ? live() : live || null),
+      classList: { contains: () => false },
+    };
+    s.document.querySelector = (sel) =>
+      hasPlayer && (sel === '#movie_player' || sel === '.html5-video-player') ? player : null;
+    load(s, ['yk-di.js', 'yk-config.js', 'yk-yt.js']);
+    return { s, yt: s.window.__YK__.resolve('yt') };
+  }
+
+  test('SPA 導航後：拒用殭屍的 window.ytInitialPlayerResponse，改用播放器的 live response', () => {
+    const fresh = { videoDetails: { videoId: 'abc' } };
+    const stale = { videoDetails: { videoId: 'previous-video' } };
+    const { yt } = ytWithResponses({ initial: stale, live: fresh });
+    expect(yt.getPlayerResponse()).toBe(fresh); // 舊碼的 `initial || live` 會回 stale → 綁錯軌
+  });
+
+  test('整頁載入早期（播放器還沒好）：videoId 相符的 window global 照用', () => {
+    const initial = { videoDetails: { videoId: 'abc' } };
+    const { yt } = ytWithResponses({ initial, hasPlayer: false });
+    expect(yt.getPlayerResponse()).toBe(initial);
+  });
+
+  test('兩個候選都不是本影片 → null（讓 waitForPlayerResponse 繼續等，不拿舊資料充數）', () => {
+    const { yt } = ytWithResponses({
+      initial: { videoDetails: { videoId: 'old-1' } },
+      live: { videoDetails: { videoId: 'old-2' } },
+    });
+    expect(yt.getPlayerResponse()).toBeNull();
+  });
+
+  test('兩份都是本影片 → 以 live 為準（導航後它跟著播放器走）', () => {
+    const tracks = { playerCaptionsTracklistRenderer: { captionTracks: [{ kind: 'asr' }] } };
+    const live = { videoDetails: { videoId: 'abc' }, captions: tracks };
+    const initial = { videoDetails: { videoId: 'abc' }, captions: tracks };
+    const { yt } = ytWithResponses({ initial, live });
+    expect(yt.getPlayerResponse()).toBe(live);
+  });
+
+  test('身分同、就緒不同：live 還沒長出字幕清單而 initial 已有 → 取 initial（不空等半熟的 live）', () => {
+    const live = { videoDetails: { videoId: 'abc' } }; // 沒 captions
+    const initial = {
+      videoDetails: { videoId: 'abc' },
+      captions: { playerCaptionsTracklistRenderer: { captionTracks: [{ kind: 'asr' }] } },
+    };
+    const { yt } = ytWithResponses({ initial, live });
+    expect(yt.getPlayerResponse()).toBe(initial);
+  });
+
+  test('waitForPlayerResponse：導航殘留不早退，等到本影片的 tracklist 才 resolve', async () => {
+    const s = makeSandbox();
+    const polls = [];
+    s.setInterval = (fn) => { polls.push(fn); return 1; };
+    s.clearInterval = () => {};
+    // 殭屍 global「有」字幕軌——舊碼會第一個 poll 就拿它 resolve（綁到上一支影片的軌）
+    s.window.ytInitialPlayerResponse = {
+      videoDetails: { videoId: 'previous-video' },
+      captions: { playerCaptionsTracklistRenderer: { captionTracks: [{ kind: 'asr', languageCode: 'ja' }] } },
+    };
+    let live = null;
+    const player = { getPlayerResponse: () => live, classList: { contains: () => false } };
+    s.document.querySelector = (sel) =>
+      sel === '#movie_player' || sel === '.html5-video-player' ? player : null;
+    load(s, ['yk-di.js', 'yk-config.js', 'yk-yt.js']);
+    const yt = s.window.__YK__.resolve('yt');
+    let resolved;
+    yt.waitForPlayerResponse(12000, () => true).then((pr) => { resolved = pr; });
+    polls[0]();
+    await new Promise((r) => setImmediate(r));
+    expect(resolved).toBeUndefined(); // 殭屍不算數：繼續等
+    const fresh = {
+      videoDetails: { videoId: 'abc' },
+      captions: { playerCaptionsTracklistRenderer: { captionTracks: [{ kind: 'asr', languageCode: 'en' }] } },
+    };
+    live = fresh; // 新頁資料就緒：播放器的 response 換成本影片
+    polls[0]();
+    await new Promise((r) => setImmediate(r));
+    expect(resolved).toBe(fresh);
+  });
+
+  test('waitForPlayerResponse：廣告中不計時（前貼廣告可長於 limit，不得誤判成 idle）', async () => {
+    const s = makeSandbox();
+    const polls = [];
+    s.setInterval = (fn) => { polls.push(fn); return 1; };
+    s.clearInterval = () => {};
+    let now = 0;
+    s.Date = { now: () => now }; // 假時鐘：只有 Date.now 被用到
+    let adShowing = true;
+    const player = {
+      getPlayerResponse: () => null, // response 一直沒來
+      classList: { contains: (c) => c === 'ad-showing' && adShowing },
+    };
+    s.document.querySelector = (sel) =>
+      sel === '#movie_player' || sel === '.html5-video-player' ? player : null;
+    load(s, ['yk-di.js', 'yk-config.js', 'yk-yt.js']);
+    const yt = s.window.__YK__.resolve('yt');
+    let resolved;
+    yt.waitForPlayerResponse(12000, () => true).then((pr) => { resolved = pr; });
+    now = 50000; // 遠超 limit，但廣告中 → deadline 凍結（重設）
+    polls[0]();
+    await new Promise((r) => setImmediate(r));
+    expect(resolved).toBeUndefined();
+    adShowing = false;
+    now = 55000; // 廣告結束後 5s（< limit）：繼續等
+    polls[0]();
+    await new Promise((r) => setImmediate(r));
+    expect(resolved).toBeUndefined();
+    now = 63000; // 廣告結束後 13s（> limit）：才逾時
+    polls[0]();
+    await new Promise((r) => setImmediate(r));
+    expect(resolved).toBeNull(); // 逾時把手上的（null）交回，由 engine 記 idle 原因
+  });
+});
+
 describe('yk-engine — tick 的 native 分支 / 導航守門 / teardown（全 mock 注入）', () => {
   function setup() {
     const s = makeSandbox();
@@ -283,6 +402,7 @@ describe('yk-engine — tick 的 native 分支 / 導航守門 / teardown（全 m
     const video = { currentTime: 5 };
     const track = { languageCode: 'en', kind: 'asr' };
     let vid = 'abc'; // 可變：導航窗口測試會把它換掉模擬 pushState 先行
+    let pr = { captions: { playerCaptionsTracklistRenderer: { captionTracks: [track] } } }; // 可變：逾時測試會換成 null
     di.register('yt', [], () => ({
       isWatchPage: () => true,
       currentVideoId: () => vid,
@@ -290,10 +410,10 @@ describe('yk-engine — tick 的 native 分支 / 導航守門 / teardown（全 m
       getVideo: () => video,
       isAdShowing: () => false,
       currentAsrSelection: () => ({ tlang: '' }),
-      waitForPlayerResponse: () =>
-        Promise.resolve({ captions: { playerCaptionsTracklistRenderer: { captionTracks: [track] } } }),
-      captionTracklist: (pr) => pr?.captions?.playerCaptionsTracklistRenderer || null,
-      pickAutoCaptionTrack: () => track,
+      waitForPlayerResponse: () => Promise.resolve(pr),
+      captionTracklist: (r) => r?.captions?.playerCaptionsTracklistRenderer || null,
+      // 誠實替身：沒有 tracks 就沒有軌（engine 的 !track/idle 分支要能被走到）
+      pickAutoCaptionTrack: (tracks) => (tracks && tracks.length ? track : null),
       waitForVideo: () => Promise.resolve(video),
       translationLanguages: () => [],
     }));
@@ -338,6 +458,7 @@ describe('yk-engine — tick 的 native 分支 / 導航守門 / teardown（全 m
       tick: () => { const fn = rafQ.shift(); if (fn) fn(); },
       poll: () => pollFns.forEach((f) => f()),
       setVid: (v) => { vid = v; },
+      setPr: (v) => { pr = v; },
     };
   }
 
@@ -430,6 +551,24 @@ describe('yk-engine — tick 的 native 分支 / 導航守門 / teardown（全 m
     expect(ctx.calls.drives).toBe(base.drives + 1);
   });
 
+  test('pr 逾時 idle 不鎖死重試：資料晚到後的下一個導航事件能重新 init', async () => {
+    // waitForPlayerResponse 逾時（resolve null）→ init 記 idle。舊碼 active 留 true，
+    // run() 的同影片守門把之後的 yt-navigate-finish/yt-page-data-updated 全 early-return
+    // 掉——資料 >12s 才到的影片永遠不啟動（「導航沒觸發」的殘餘通道）。
+    const ctx = await setup();
+    ctx.setPr(null); // 首次 init：response 等不到
+    ctx.engine.start();
+    await ctx.settle();
+    await ctx.settle();
+    expect(ctx.rafQ.length).toBe(0); // 沒綁到，render loop 沒排上
+    ctx.setPr({ captions: { playerCaptionsTracklistRenderer: { captionTracks: [{ languageCode: 'en', kind: 'asr' }] } } });
+    ctx.s.location.href = 'https://www.youtube.com/watch?v=abc&late=1'; // 資料晚到，導航事件再來
+    ctx.poll(); // URL fallback 輪詢（與 yt-page-data-updated 同路徑：onNavigate → run）
+    await ctx.settle();
+    await ctx.settle();
+    expect(ctx.rafQ.length).toBeGreaterThan(0); // 這次 init 成功、render loop 排上
+  });
+
   test('teardown 通知 autodrive.reset（same-video 導離再導回要重新自動啟動）', async () => {
     // tick 導航守門的連帶效應：drive 在離開後不再跑，autodrive 的 one-shot latch
     // 觀察不到「離開」——不 re-arm 的話，同支影片回歸會卡在 done、字幕不再自動恢復。
@@ -447,6 +586,15 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
     const s = makeSandbox();
     load(s, ['yk-di.js']);
     const di = s.window.__YK__;
+    // 計數而不斷言訊息格式：drive() 每 tick 都跑，「穩態零輸出」是 log 紀律的硬約，
+    // 靜音 mock 會讓逐 tick 洗版回歸而全綠——用呼叫數守住。
+    const logCalls = [];
+    di.register('log', [], () => ({
+      info: (...a) => logCalls.push(a),
+      warn: (...a) => logCalls.push(a),
+      error: (...a) => logCalls.push(a),
+      variant: (lang, tlang) => (tlang ? lang + '→' + tlang : lang), // 與 yk-log 同約（標籤本體不入約）
+    }));
     const cur = { autoDualLang: 'zh-Hant' };
     di.register('settings', [], () => ({ current: cur }));
     const pool = new Set(); // 已捕獲的變體 key（'' = 原文）
@@ -456,6 +604,7 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
     let vid = 'abc';
     let selTlang = null; // null = 未選任何 asr 變體
     let selectOk = true;
+    let sticky = true; // false = setOption 回 true 但選擇不落地（病態播放器）
     let ad = false;
     const selects = [];
     di.register('yt', [], () => ({
@@ -464,20 +613,22 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
       currentAsrSelection: () => (selTlang == null ? null : { tlang: selTlang }),
       selectAsrVariant: (_t, tl) => {
         selects.push(tl);
-        if (selectOk) selTlang = tl;
-        return selectOk;
+        if (!selectOk) return false;
+        if (sticky) selTlang = tl;
+        return true;
       },
     }));
     load(s, ['yk-autodrive.js']);
     const ad_ = di.resolve('autodrive');
     const TRACK = { languageCode: 'en' };
     return {
-      ad: ad_, selects, cur,
+      ad: ad_, selects, cur, logCalls,
       drive: () => ad_.drive(TRACK, 'en'),
       arrive: (k) => pool.add(k),
       setSel: (v) => { selTlang = v; },
       setVid: (v) => { vid = v; },
       setSelectOk: (v) => { selectOk = v; },
+      setSticky: (v) => { sticky = v; },
       setAd: (v) => { ad = v; },
     };
   }
@@ -495,6 +646,10 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
     c.drive();
     c.drive();
     expect(c.selects).toEqual(['', 'zh-Hant']); // done：one-shot，穩態不再驅動
+    // 穩態 log 靜默：done 後繼續 tick，不得再有任何輸出（log 紀律的硬約）。
+    const logsAtDone = c.logCalls.length;
+    for (let i = 0; i < 50; i++) c.drive();
+    expect(c.logCalls.length).toBe(logsAtDone);
   });
 
   test('reset() re-arm：done 後播放器選軌被重設，reset 才會重新驅動（same-video 回歸）', () => {
@@ -510,6 +665,100 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
     c.ad.reset(); // engine.teardown 的通知
     c.drive();
     expect(c.selects).toEqual(['zh-Hant', 'zh-Hant']); // re-arm → 重新自動啟動
+  });
+
+  // ---- 漂移重選（nudge）：驅動後、body 到貨前，播放器自己把選軌重設（廣告邊界、
+  // 初始化覆寫）——那次 fetch 已死、body 永遠不來。不重選的話鏈卡在半路（「只駕駛一半」：
+  // 畫面停在原文，譯文永不出現）。----
+
+  test('漂移重選（orig）：等原文 body 期間選擇被重設 → 重選原文，鏈才走得完', () => {
+    const c = setup();
+    c.drive();
+    expect(c.selects).toEqual(['']); // start→orig
+    c.setSel(null); // 播放器把選軌丟了（body 未到 → 那次 fetch 已死）
+    c.drive();
+    expect(c.selects).toEqual(['', '']); // 觀察到漂移 → 重選原文
+    const logsAfterNudge = c.logCalls.length;
+    c.drive();
+    expect(c.selects).toEqual(['', '']); // 已回到原文上、body 未到 → 等待，不逐 tick 重複
+    expect(c.logCalls.length).toBe(logsAfterNudge); // 等待中也不逐 tick 洗版
+    c.arrive('');
+    c.drive();
+    expect(c.selects).toEqual(['', '', 'zh-Hant']); // 到貨 → 照常切譯文
+  });
+
+  test('漂移重選失敗（player 未 ready）不耗預算：復原後仍可完整重選', () => {
+    const c = setup();
+    c.drive(); // start→orig
+    c.setSel(null); // 漂移
+    c.setSelectOk(false); // player 一時不 ready：每 tick 重試、不計次
+    for (let i = 0; i < 20; i++) c.drive();
+    expect(c.selects).toHaveLength(1 + 20); // 每 tick 都嘗試（失敗不噤聲不放棄）
+    c.setSelectOk(true);
+    c.drive();
+    expect(c.selects).toHaveLength(1 + 20 + 1); // 復原 → 成功重選（預算從 1/8 才開始算）
+    c.arrive('');
+    c.drive();
+    expect(c.selects.at(-1)).toBe('zh-Hant'); // 鏈照常走完
+  });
+
+  test('廣告中不漂移重選；廣告後補上（廣告期間的選軌不是主影片的事實）', () => {
+    const c = setup();
+    c.drive(); // start→orig
+    c.setSel(null); // 漂移
+    c.setAd(true);
+    c.drive();
+    c.drive();
+    expect(c.selects).toEqual(['']); // 廣告中不動
+    c.setAd(false);
+    c.drive();
+    expect(c.selects).toEqual(['', '']); // 廣告後補重選
+  });
+
+  test('卡等重踢：選擇還在變體上但 body 一直不來（空/壞回應不入池）→ 同變體重選重發 fetch', () => {
+    const c = setup();
+    c.drive(); // start→orig（人停在原文上，body 永遠不來）
+    expect(c.selects).toEqual(['']);
+    for (let i = 0; i < 599; i++) c.drive();
+    expect(c.selects).toEqual(['']); // 門檻（600 tick）前：安靜等待
+    c.drive(); // 第 600 個空等 tick → 重踢
+    expect(c.selects).toEqual(['', '']); // 同變體重選（不換軌、不對戰使用者）
+    for (let i = 0; i < 599; i++) c.drive();
+    expect(c.selects).toHaveLength(2); // 重踢後重新計數
+    c.arrive(''); // 這次 fetch 成功了
+    c.drive();
+    expect(c.selects.at(-1)).toBe('zh-Hant'); // 鏈繼續：切譯文
+  });
+
+  test('漂移重選（trans）＋ done 需在目標上：body 在池裡但選擇被重設 → 重選、才收 done', () => {
+    const c = setup();
+    c.arrive('');
+    c.arrive('zh-Hant'); // 跨導航池快取：兩份 body 都已在
+    c.drive(); // start：直接切譯文 → trans
+    expect(c.selects).toEqual(['zh-Hant']);
+    c.setSel(null); // done 未收前播放器掉軌——舊碼 haveTrans 就收 done，字幕從此鎖死
+    c.drive();
+    expect(c.selects).toEqual(['zh-Hant', 'zh-Hant']); // 不收 done，重選目標
+    c.drive(); // 在目標上＋body 在 → done
+    c.setSel(null);
+    c.drive();
+    expect(c.selects).toEqual(['zh-Hant', 'zh-Hant']); // done 後不再驅動（one-shot 尊重使用者）
+  });
+
+  test('漂移重選有上限：setOption 接受但不生效 → 至多 8 次後停手，不逐 tick 洗版', () => {
+    const c = setup();
+    c.setSticky(false); // 病態播放器：select 回 true、選擇不落地
+    c.drive(); // start→orig（第 1 次 select）
+    for (let i = 0; i < 20; i++) c.drive(); // orig 相位長期漂移
+    expect(c.selects).toHaveLength(1 + 8); // 初次 + 8 次 nudge，之後穩態零動作
+    const logsAtCap = c.logCalls.length;
+    for (let i = 0; i < 50; i++) c.drive();
+    expect(c.logCalls.length).toBe(logsAtCap); // 超限後穩態也零輸出（不洗版）
+    c.ad.reset(); // teardown re-arm → 預算歸零
+    c.drive();
+    expect(c.selects).toHaveLength(1 + 8 + 1); // 新 one-shot：start 相位重新可驅動
+    c.drive();
+    expect(c.selects).toHaveLength(1 + 8 + 1 + 1); // 且 nudge 預算真的歸零了（沒歸零這步會被擋）
   });
 
   test('影片變更自動 re-arm（既有語義不受 reset 引入影響）', () => {

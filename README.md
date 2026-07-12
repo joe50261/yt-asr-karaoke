@@ -87,6 +87,10 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   雙列*（顯示）。選定目標語言後，引擎**一次性**驅動播放器（用它自己的
   `setOption` API）先到原文 asr、再到該語言的自動翻譯——不需要手動走
   `自動產生`/`自動翻譯`，每一步都以 body 實際捕獲為門檻（沒有計時器）。
+  若播放器在等待 body 時自己把選軌重設（廣告邊界、初始化覆寫），引擎會
+  觀察到漂移並**重選**（每輪驅動有限次）；若選軌還在但 body 遲遲不到
+  （空/壞回應），空等約 10 秒會**重選同一變體重發請求**——驅動鏈不會
+  卡在半路。
   一次性：換影片、換目標語言、或引擎 teardown 後回到同支影片，才會再驅動
   一輪。切回`關閉`只是**停止自動驅動**；顯示狀態屬於
   **雙語對照**自己的開關，不受影響。因為兩者正交，任何組合都成立
@@ -135,7 +139,10 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
 - `yk-config.js` —— ID、儲存鍵、時間常數、`CJK_RE`，以及跨模組契約常數
   （播放器宿主 selector 表、卡拉OK亮字金、字幕樣式 preset 值、寬度上限）——
   同一條規則的 CSS 端與 JS 端都從這裡取值。
-- `yk-log.js` —— 帶標籤的 console logger。
+- `yk-log.js` —— 帶標籤的 console logger；也持有**變體 log 標籤**的唯一
+  定義點（`variant()`：原文 `en`、翻譯 `en→zh-Hant`）——engine 的
+  binding/bound 與 yk-autodrive 的 select/drift/stall 同用，同一變體在
+  log 裡只有一種寫法。
 - `yk-settings.js` —— 設定中樞：持有即時的 `current`（含 Karaoke 主開關
   `enabled`），由 `bridge.js` 轉送進來；`apply()` 是唯一寫入路徑（就地改
   `current` ＋ 轉送出去持久化）。也持有雙軌顯示政策 `dualDisplayKeys`
@@ -146,7 +153,10 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
 - `yk-parse.js` —— 純函數的 json3 → 字 → 行（無 DOM、無狀態；`linesFromJson`
   一步到位）。
 - `yk-yt.js` —— YouTube 播放器與 DOM 的無狀態 adapter（含 playerResponse →
-  字幕軌清單的唯一讀取點 `captionTracklist`）。
+  字幕軌清單的唯一讀取點 `captionTracklist`）。`getPlayerResponse` 以
+  `videoDetails.videoId` 對當前 URL 驗明正身：SPA 導航後
+  `window.ytInitialPlayerResponse` 是上一次整頁載入的殭屍資料，不驗會
+  綁到舊影片的軌（自動翻譯在導航後整個不啟動）。
 - `yk-ui.js` —— player-chrome 共用 UI 機制：藥丸鈕掛載（`mountPillButton`，
   Karaoke 開關 / ⚙ / 字幕全文三顆共用）與 pointer-capture 拖曳調寬
   （`attachDragResize`，拖出視窗放開不會掛死）。
@@ -169,8 +179,13 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   （持有自己的驅動 latch），**加上** `redrive()`（切一遍）——在 yk-native
   請求時把當前變體重選一次；播放器沒有字幕快取，任何 `setOption` 選軌
   都會讓它重新請求 timedtext。一個 boolean 旗標，逐 tick 重試到
-  播放器接受為止；沒有計時器。engine 每 tick 呼叫 `drive()`、teardown 時
-  呼叫 `reset()`。
+  播放器接受為止；沒有計時器。等待 body 期間若觀察到播放器丟掉了我們
+  驅動的選擇，會**漂移重選**；若選擇還在但 body 空等過久（壞回應不入池，
+  fetch 觀察不到地死了），會**卡等重踢**——重選同一變體讓播放器重發請求
+  （與切一遍同一招，計 rAF tick 不設計時器）。兩者共用每輪 one-shot
+  上限 8 次的預算，防止與使用者對戰或洗版。每個動作（選軌、相位轉移、
+  re-arm、切一遍）都記 log 並帶 `v=<影片id>`，多影片連續導航時可逐行
+  對上。engine 每 tick 呼叫 `drive()`、teardown 時呼叫 `reset()`。
 - `yk-native.js` —— **原生播放模式**，獨立的可熱抽換模組：純函數
   `cookKaraoke(entries, opts)`（解析後的行 → 卡拉OK `json3`：pop-on 視窗、
   逐字重繪事件、經 `timing.wordState` 的逐 seg pen、整數色值）、註冊到
