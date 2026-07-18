@@ -42,6 +42,14 @@
     // long lines wrap via CSS — there is NO word-count cap. This gap is a fallback
     // used ONLY for captions that carry no \n line structure at all.
     LINE_BREAK_GAP_MS: 700,
+    // Pathological-line safety valve (yk-parse rule 4). Some asr bodies arrive with NO
+    // \n marks anywhere; word ends are clamped to the next word's start, so continuous
+    // speech has no >700ms gaps either — without a backstop the whole video collapses
+    // into ONE line. A grouped line whose word ONSETS span more than LINE_MAX_SPAN_MS
+    // is degenerate (real asr lines run 2–7 s; fixtures max ~2.6 s) and gets re-split
+    // at word boundaries into ~LINE_SPLIT_TARGET_MS chunks.
+    LINE_MAX_SPAN_MS: 12000,
+    LINE_SPLIT_TARGET_MS: 4000,
     // A line lights up this many ms before its first word — applied as one shared
     // lead-in so a line is active over [start - LEAD, nextStart - LEAD): contiguous,
     // never overlapping. (Overlapping windows made a click land on the previous line.)

@@ -6,7 +6,7 @@
 (function () {
   'use strict';
   window.__YK__.register('parse', ['config'], (config) => {
-    const { LINE_BREAK_GAP_MS, CJK_RE } = config;
+    const { LINE_BREAK_GAP_MS, LINE_MAX_SPAN_MS, LINE_SPLIT_TARGET_MS, CJK_RE } = config;
 
     function captionJsonFromText(text) {
       if (!text || !text.trim()) return null;
@@ -24,19 +24,30 @@
         if (!ev.segs) continue;
         const base = ev.tStartMs || 0;
         const blockEnd = base + (ev.dDurationMs || 0);
+        let firstWordOfEvent = true;
         for (const seg of ev.segs) {
           const text = seg.utf8;
           if (!text) continue;
-          if (text === '\n') {
-            // The caption data's OWN line break (a standalone \n segment). Mark the
-            // last word as a line end so groupLines breaks here.
-            if (words.length) words[words.length - 1].breakAfter = true;
-            continue;
-          }
           // A seg with no tOffsetMs starts at the event base (line-level timing);
           // no position is invented for it.
           const start = base + (seg.tOffsetMs || 0);
-          words.push({ text, start, end: blockEnd, breakAfter: false });
+          // A \n ANYWHERE in a seg is the caption data's OWN line break: the classic
+          // format sends it as a standalone "\n" seg, but it also arrives embedded
+          // ("word\n", "\nword"). Split on it; every seam marks the preceding word as
+          // a line end so groupLines breaks there.
+          const parts = text.split('\n');
+          for (let p = 0; p < parts.length; p++) {
+            if (p > 0 && words.length) words[words.length - 1].breakAfter = true;
+            if (!parts[p]) continue;
+            // A NON-append event is a fresh caption paint. Remember that boundary on
+            // the previous word: it is groupLines' fallback line structure for tracks
+            // that carry no \n marks at all (an aAppend event continues the line).
+            if (firstWordOfEvent) {
+              if (!ev.aAppend && words.length) words[words.length - 1].eventBreak = true;
+              firstWordOfEvent = false;
+            }
+            words.push({ text: parts[p], start, end: blockEnd, breakAfter: false });
+          }
         }
       }
       words.sort((a, b) => a.start - b.start);
@@ -64,8 +75,10 @@
     function groupLines(words) {
       if (!words.length) return [];
       // Break rules: (1) the data's own \n marks; (2) a speaker change (">>");
-      // (3) only when the track has no \n marks at all — a time gap between words
-      // longer than LINE_BREAK_GAP_MS. No word-count cap; long lines wrap via CSS.
+      // (3) only when the track has no \n marks at all — the event boundaries marked
+      // during parse (asr's line structure lives on its events when the \n marks are
+      // missing), plus a time gap between words longer than LINE_BREAK_GAP_MS; (4) the
+      // LINE_MAX_SPAN_MS safety valve below. No word-count cap; long lines wrap via CSS.
       const hasDataBreaks = words.some((w) => w.breakAfter);
       const lines = [];
       let current = { words: [], start: words[0].start, end: words[0].end };
@@ -85,11 +98,14 @@
         // Rule (2): YouTube/CEA captions mark a change of speaker with ">>"
         // (">>>" a change of topic).
         const speakerBreak = /^\s*>>/.test(w.text);
-        // Rule (3): no \n structure anywhere → a gap > LINE_BREAK_GAP_MS breaks the
-        // line (a pause inside a semantic \n line is not a boundary).
+        // Rule (3): no \n structure anywhere → break at event boundaries and at a gap
+        // > LINE_BREAK_GAP_MS. With \n structure present neither applies: events merge
+        // unless the data says otherwise (a pause inside a semantic \n line is not a
+        // boundary, and YouTube merging translated lines across events is deliberate).
+        const eventBreak = !hasDataBreaks && !!prev?.eventBreak;
         const gapBreak = !hasDataBreaks && prev && w.start - prev.end > LINE_BREAK_GAP_MS;
 
-        if (current.words.length && (dataBreak || speakerBreak || gapBreak)) {
+        if (current.words.length && (dataBreak || speakerBreak || eventBreak || gapBreak)) {
           flush();
           current = { words: [], start: w.start, end: w.end };
         }
@@ -106,7 +122,45 @@
         if (w.start < current.start) current.start = w.start;
       }
       flush();
-      return lines;
+      // Rule (4), safety valve: a "line" whose word onsets span more than
+      // LINE_MAX_SPAN_MS means every structure above was missing (no \n marks, no
+      // event boundaries, gapless timing — e.g. one giant event holding the whole
+      // video). Re-split it at word boundaries into ~LINE_SPLIT_TARGET_MS chunks.
+      // Real lines never get here (fixtures max ~2.6 s vs the 12 s threshold).
+      return lines.flatMap(splitOversizedLine);
+    }
+
+    // Words (already carrying their boundary spaces) → a line with the same start/end
+    // semantics as groupLines' accumulator.
+    function lineFromWords(ws) {
+      const line = { words: ws, start: ws[0].start, end: 0 };
+      for (const w of ws) {
+        line.end = Math.max(line.end, w.end, w.start + 400);
+        if (w.start < line.start) line.start = w.start;
+      }
+      line.text = ws.map((w) => w.text).join('');
+      return line;
+    }
+
+    function splitOversizedLine(line) {
+      const ws = line.words;
+      if (ws.length < 2 || ws[ws.length - 1].start - ws[0].start <= LINE_MAX_SPAN_MS) {
+        return [line];
+      }
+      const out = [];
+      let chunk = [];
+      for (const w of ws) {
+        if (chunk.length && w.start - chunk[0].start > LINE_SPLIT_TARGET_MS) {
+          out.push(lineFromWords(chunk));
+          chunk = [];
+          // The seam we just cut owned this word's boundary space (json3 spacing is a
+          // LEADING space) — a line-leading word carries none.
+          w.text = w.text.replace(/^ /, '');
+        }
+        chunk.push(w);
+      }
+      if (chunk.length) out.push(lineFromWords(chunk));
+      return out;
     }
 
     // json3 → lines 一步到位（模組職責「json3 → words → lines」的組合形；消費端一律走
