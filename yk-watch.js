@@ -78,6 +78,11 @@
       own = null;
     }
 
+    // 掛載自報（resolve 時一次）：把「模組有沒有載入」與「播放器可不可觀測」拆成兩個
+    // 可分辨的訊號——之後若 attached 有印而 [baseline] 遲遲不出，問題明確在
+    // captionState 一直回 null，而不是模組根本不在頁面裡。
+    log.info('watch', 'attached');
+
     return { tick, markOwn, reset, dispose: reset };
   });
 })();

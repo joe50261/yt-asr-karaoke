@@ -205,7 +205,9 @@
         ensureToggle();
         panel.ensureButton(); // the ⚙ settings menu shares the toggle's lifetime/hover-reveal
         state.videoId = yt.currentVideoId();
-        log.info('engine', 'v=' + state.videoId, 'init: waiting for player response');
+        // build 隨每支影片的 init 行重印：貼出來的 log 常從導航後才開始，只有開機
+        // 那一行自報的話，中途起貼的片段就又回到無憑據狀態。
+        log.info('engine', 'v=' + state.videoId, 'init: waiting for player response', '(build ' + config.BUILD + ')');
 
         state.stage = 'player-response';
         const pr = await yt.waitForPlayerResponse(12000, () => state.active);

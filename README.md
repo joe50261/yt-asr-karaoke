@@ -158,7 +158,11 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
 - `yk-di.js` —— DI 容器：`register` / `resolve` / `start` / 熱抽換。
 - `yk-config.js` —— ID、儲存鍵、時間常數、`CJK_RE`，以及跨模組契約常數
   （播放器宿主 selector 表、卡拉OK亮字金、字幕樣式 preset 值、寬度上限）——
-  同一條規則的 CSS 端與 JS 端都從這裡取值。
+  同一條規則的 CSS 端與 JS 端都從這裡取值。也持有 **`BUILD`（運行 build
+  自報）**：yk-main 開機第一行印 `boot build <BUILD>`，engine 每支影片的
+  `init` 行也重印——console log 因此自帶「跑的是哪一版」的憑據（Chrome 對
+  未封裝擴充功能不會自動重載，repo 已更新 ≠ 頁面注入的是新檔）。規則：
+  **每次推送都必須 bump `BUILD`**，貼 log 回報問題時對照這個值。
 - `yk-log.js` —— 帶標籤的 console logger；也持有**變體 log 標籤**的唯一
   定義點（`variant()`：原文 `en`、翻譯 `en→zh-Hant`）——engine 的
   binding/bound 與 yk-autodrive 的 select/drift/stall 同用，同一變體在
@@ -188,7 +192,9 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   session 的不明生命週期點重置選軌（偏好 reconcile），這是抓「哪個
   瞬間、前後發生什麼」的材料。engine 每 tick 呼叫 `tick()`（導航守門
   之前——導航窗口內的重置也要看得到）、teardown 呼叫 `reset()`。
-  穩態零輸出。
+  穩態零輸出。resolve 時自報一行 `watch attached`——「模組有沒有載入」
+  與「播放器可不可觀測」拆成兩個可分辨的訊號：attached 有印而
+  `[baseline]` 不出，問題在 `captionState` 回 null，不是模組不在頁面裡。
 - `yk-ui.js` —— player-chrome 共用 UI 機制：藥丸鈕掛載（`mountPillButton`，
   Karaoke 開關 / ⚙ / 字幕全文三顆共用）與 pointer-capture 拖曳調寬
   （`attachDragResize`，拖出視窗放開不會掛死）。

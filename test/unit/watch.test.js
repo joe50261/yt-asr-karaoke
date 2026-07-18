@@ -24,9 +24,23 @@ describe('yk-watch — 逐 tick 差分觀測（mock 注入 log/yt）', () => {
       currentVideoId: () => st.vid,
     }));
     load(s, ['yk-watch.js']);
-    return { watch: di.resolve('watch'), st, lines };
+    const watch = di.resolve('watch');
+    lines.length = 0; // 掛載自報行（attached）不算進各測試的觀測輸出
+    return { watch, st, lines };
   }
   const track = { languageCode: 'en' };
+
+  test('resolve 即自報 attached：模組載入與播放器可觀測是兩個可分辨的訊號', () => {
+    const s = makeSandbox();
+    load(s, ['yk-di.js']);
+    const di = s.window.__YK__;
+    const lines = [];
+    di.register('log', [], () => ({ info: (...a) => lines.push(a.join(' ')), warn() {}, error() {}, variant: () => '' }));
+    di.register('yt', [], () => ({ captionState: () => null, currentVideoId: () => null }));
+    load(s, ['yk-watch.js']);
+    di.resolve('watch');
+    expect(lines).toEqual(['watch attached']); // 播放器永不就緒也要有這行
+  });
 
   test('首次觀測記 [baseline]；之後穩態零輸出（log 紀律）', () => {
     const { watch, lines } = setup();
