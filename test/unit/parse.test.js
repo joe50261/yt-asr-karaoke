@@ -75,6 +75,72 @@ describe('yk-parse.groupLines — rule (3): tracks with NO \\n marks fall back t
   });
 });
 
+describe('yk-parse — line-level roll-up asr (real captured body: cue-sized segs, embedded \\n, NO tOffsetMs)', () => {
+  const fx = () => fixture('linelevel-rollup.asr.json3.json');
+
+  test('every cue row becomes its own line, in order, with nothing lost', () => {
+    const parse = makeParse();
+    const lines = parse.linesFromJson(fx());
+    expect(lines.slice(0, 6).map((l) => l.text)).toEqual([
+      'My garden is completely overrun with',
+      'brambles, and most people just throw',
+      "them away. But, in this video, I'm going",
+      'to see if I can turn this thorny',
+      'nightmare into tea that actually taste',
+      'good.',
+    ]);
+    // Full reconstruction: rows rejoined equal the cue text stream. Before the
+    // boundary-\n gate, cross-cue merges produced misaligned double rows; before the
+    // embedded-\n rule, the whole video was ONE line.
+    const orig = fx().events.filter((e) => e.segs)
+      .map((e) => e.segs.map((s) => s.utf8 || '').join('')).join('\n');
+    expect(lines.map((l) => l.text).join('\n')).toBe(orig);
+  });
+
+  test('per-word karaoke units are interpolated over the cue SPEECH window (display windows overlap)', () => {
+    const parse = makeParse();
+    const lines = parse.linesFromJson(fx());
+    expect(lines[0].words.length).toBeGreaterThan(1); // real units, not one blob per row
+    // onsets stay ordered across the whole track — the global sort cannot scramble text
+    const starts = lines.flatMap((l) => l.words.map((w) => w.start));
+    expect(starts.some((s, i) => i && s < starts[i - 1])).toBe(false);
+    // cue 1 displays over 0–7840ms but cue 2 SPEAKS from 4960 — interpolation must
+    // stay inside the speech window or the sort would interleave neighbouring cues
+    const cue1Last = lines[1].words[lines[1].words.length - 1];
+    expect(cue1Last.end).toBeLessThanOrEqual(4960);
+  });
+
+  test('">>" speaker rows still open their own line (isSpeakerChange body parses)', () => {
+    const parse = makeParse();
+    const lines = parse.linesFromJson(fx());
+    expect(lines.some((l) => l.text === '>> They had higher humidity, low oxygen,')).toBe(true);
+  });
+
+  test('a CJK line-level row interpolates per character', () => {
+    const parse = makeParse();
+    const lines = parse.linesFromJson({ events: [
+      { tStartMs: 0, dDurationMs: 3000, segs: [{ utf8: '上周，Anthropic 去年底' }] },
+      { tStartMs: 2000, dDurationMs: 2000, segs: [{ utf8: '宣布' }] },
+    ] });
+    expect(lines.map((l) => l.text)).toEqual(['上周，Anthropic 去年底', '宣布']);
+    const w = lines[0].words;
+    expect(w.map((x) => x.text)).toEqual(['上', '周', '，', 'Anthropic', ' 去', '年', '底']);
+    expect(w[0].start).toBe(0);
+    expect(w[w.length - 1].end).toBe(2000); // clipped to the next cue's onset
+  });
+
+  test('word-level tracks are untouched: an offset-less multi-word event stays ONE seg-word', () => {
+    const parse = makeParse();
+    const lines = parse.linesFromJson({ events: [
+      { tStartMs: 0, dDurationMs: 2000, segs: [{ utf8: 'multi word label' }] },
+      { tStartMs: 2000, dDurationMs: 2000, segs: [{ utf8: 'timed' }, { utf8: ' words', tOffsetMs: 400 }] },
+    ] });
+    // the TRACK carries offsets, so interpolation must not fire anywhere in it
+    expect(lines[0].text).toBe('multi word label');
+    expect(lines[0].words).toHaveLength(1);
+  });
+});
+
 describe('yk-parse.groupLines — rule (4): LINE_MAX_SPAN_MS safety valve', () => {
   test('one giant event holding the whole video re-splits into ~LINE_SPLIT_TARGET_MS chunks', () => {
     const parse = makeParse();

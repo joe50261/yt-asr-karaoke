@@ -10,6 +10,7 @@ dual-track 配對 / `groupLines` / transcript 間距邏輯。
 | `5ipNqGvS5Hw.en.asr.json3.json` | 原文自動字幕（en, ASR），前 ~90 秒 |
 | `5ipNqGvS5Hw.en-zh-Hant.asr.json3.json` | 同一條 ASR track 的自動翻譯（→ zh-Hant），前 ~90 秒 |
 | `cooked.5ipNqGvS5Hw.en.karaoke.json3.json` | **golden**：`cookKaraoke`（yk-native）對 en fixture 中 start∈[9100,10500]ms 行的輸出。配方（整數 fcForeColor / pop-on standalone cue / per-seg pPenId）經真 youtube.com live 實證；provenance 與重生程序見 `test/e2e-b/RUNBOOK.md`——嚴禁用改過的碼直接重生讓測試變綠 |
+| `linelevel-rollup.asr.json3.json` | **行級 roll-up 格式**的真實 asr body（使用者回報「一大坨沒換行＋逐字失效」附上）：每事件單一 cue seg、兩列內嵌 `\n`、整軌**無 `tOffsetMs`**、`sdScrollDir` roll-up 窗、事件顯示時長互相重疊。驗證事件邊界斷行（boundary-`\n` 閘門）與逐字 onset 內插 |
 | `meta.json` | 來源、抓取方式、精簡說明、統計 |
 | `_analyze.py` | 複刻 `groupLines` 的對齊驗證腳本（`python3 _analyze.py`） |
 

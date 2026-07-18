@@ -18,13 +18,97 @@
       }
     }
 
+    // Karaoke units of one line-level row: latin words carrying their LEADING space
+    // (json3's own inter-word spacing convention), CJK characters one by one.
+    function splitRowIntoUnits(text) {
+      const units = [];
+      let pend = ''; // whitespace waiting to lead the next unit
+      let cur = '';
+      const flush = () => {
+        if (cur) units.push(cur);
+        cur = '';
+      };
+      for (const ch of text) {
+        if (ch === ' ') {
+          flush();
+          pend += ' ';
+        } else if (CJK_RE.test(ch)) {
+          flush();
+          units.push(pend + ch);
+          pend = '';
+        } else {
+          if (!cur) {
+            cur = pend;
+            pend = '';
+          }
+          cur += ch;
+        }
+      }
+      flush();
+      return units;
+    }
+
     function parseCaptionEvents(json) {
+      const events = (json.events || []).filter((ev) => ev.segs);
+      // Track shape: word-level tracks time their words (tOffsetMs somewhere); a track
+      // with NO offsets anywhere is LINE-level — cue-sized segs, "row1\nrow2", the
+      // roll-up asr format. The distinction is per TRACK, not per event: word-level
+      // tracks also hold offset-less single-word events ('lucasfilm') that must not
+      // be touched.
+      const wordLevel = events.some((ev) => ev.segs.some((s) => s.tOffsetMs != null));
+      const producesWords = (ev) =>
+        ev.segs.some((s) => s.utf8 && s.utf8.split('\n').some((p) => p));
       const words = [];
-      for (const ev of json.events || []) {
-        if (!ev.segs) continue;
+      for (let e = 0; e < events.length; e++) {
+        const ev = events[e];
         const base = ev.tStartMs || 0;
         const blockEnd = base + (ev.dDurationMs || 0);
         let firstWordOfEvent = true;
+        // A NON-append event is a fresh caption paint. Remember that boundary on the
+        // previous word: it is groupLines' fallback line structure for tracks whose
+        // \n marks don't encode it (an aAppend event continues the line instead).
+        const push = (text, start, end) => {
+          if (firstWordOfEvent) {
+            if (!ev.aAppend && words.length) words[words.length - 1].eventBreak = true;
+            firstWordOfEvent = false;
+          }
+          words.push({ text, start, end, breakAfter: false });
+        };
+
+        // LINE-level cue with several units: the data has no per-word timing at all,
+        // so interpolate word onsets by character weight over the cue's SPEECH window
+        // [base, next word-bearing event's base) — the cue's own dDurationMs is a
+        // DISPLAY window that overlaps the next cue (two roll-up rows stay on screen),
+        // and interpolating over it would interleave neighbouring cues in the sort.
+        const rows = wordLevel ? null : ev.segs.map((s) => s.utf8 || '').join('').split('\n');
+        const units = rows ? rows.map(splitRowIntoUnits) : null;
+        const unitCount = units ? units.reduce((n, r) => n + r.length, 0) : 0;
+        if (unitCount > 1) {
+          let speechEnd = blockEnd;
+          for (let k = e + 1; k < events.length; k++) {
+            if (producesWords(events[k])) {
+              const nb = events[k].tStartMs || 0;
+              if (nb > base && nb < speechEnd) speechEnd = nb;
+              break;
+            }
+          }
+          const weight = (u) => u.trim().length || 1;
+          const total = units.reduce((n, r) => n + r.reduce((m, u) => m + weight(u), 0), 0);
+          const span = Math.max(0, speechEnd - base);
+          let acc = 0;
+          for (let r = 0; r < units.length; r++) {
+            for (const u of units[r]) {
+              const t0 = base + Math.round((span * acc) / total);
+              acc += weight(u);
+              const t1 = base + Math.round((span * acc) / total);
+              push(u, t0, t1);
+            }
+            // the row seam is the cue's own \n — a data line mark, same as below
+            if (r < units.length - 1 && words.length) words[words.length - 1].breakAfter = true;
+          }
+          continue;
+        }
+
         for (const seg of ev.segs) {
           const text = seg.utf8;
           if (!text) continue;
@@ -39,14 +123,7 @@
           for (let p = 0; p < parts.length; p++) {
             if (p > 0 && words.length) words[words.length - 1].breakAfter = true;
             if (!parts[p]) continue;
-            // A NON-append event is a fresh caption paint. Remember that boundary on
-            // the previous word: it is groupLines' fallback line structure for tracks
-            // that carry no \n marks at all (an aAppend event continues the line).
-            if (firstWordOfEvent) {
-              if (!ev.aAppend && words.length) words[words.length - 1].eventBreak = true;
-              firstWordOfEvent = false;
-            }
-            words.push({ text: parts[p], start, end: blockEnd, breakAfter: false });
+            push(parts[p], start, blockEnd);
           }
         }
       }
@@ -75,11 +152,18 @@
     function groupLines(words) {
       if (!words.length) return [];
       // Break rules: (1) the data's own \n marks; (2) a speaker change (">>");
-      // (3) only when the track has no \n marks at all — the event boundaries marked
-      // during parse (asr's line structure lives on its events when the \n marks are
-      // missing), plus a time gap between words longer than LINE_BREAK_GAP_MS; (4) the
-      // LINE_MAX_SPAN_MS safety valve below. No word-count cap; long lines wrap via CSS.
-      const hasDataBreaks = words.some((w) => w.breakAfter);
+      // (3) when the \n marks don't encode the EVENT BOUNDARIES — break at the
+      // boundaries marked during parse plus at gaps longer than LINE_BREAK_GAP_MS;
+      // (4) the LINE_MAX_SPAN_MS safety valve below. No word-count cap; long lines
+      // wrap via CSS.
+      //
+      // The boundary test: the classic format writes its \n marks AT event boundaries
+      // (standalone \n segs between word events — breakAfter and eventBreak land on
+      // the same word), so a boundary WITHOUT \n is a deliberate merge (YouTube
+      // merging translated lines across events). The line-level cue format puts \n
+      // only INSIDE events ("row1\nrow2") — boundaries carry no encoding there, so a
+      // new event still opens a new line.
+      const hasBoundaryNl = words.some((w) => w.breakAfter && w.eventBreak);
       const lines = [];
       let current = { words: [], start: words[0].start, end: words[0].end };
 
@@ -98,12 +182,12 @@
         // Rule (2): YouTube/CEA captions mark a change of speaker with ">>"
         // (">>>" a change of topic).
         const speakerBreak = /^\s*>>/.test(w.text);
-        // Rule (3): no \n structure anywhere → break at event boundaries and at a gap
-        // > LINE_BREAK_GAP_MS. With \n structure present neither applies: events merge
-        // unless the data says otherwise (a pause inside a semantic \n line is not a
-        // boundary, and YouTube merging translated lines across events is deliberate).
-        const eventBreak = !hasDataBreaks && !!prev?.eventBreak;
-        const gapBreak = !hasDataBreaks && prev && w.start - prev.end > LINE_BREAK_GAP_MS;
+        // Rule (3): \n marks don't encode the boundaries → break at event boundaries
+        // and at a gap > LINE_BREAK_GAP_MS. With boundary-encoded \n structure neither
+        // applies: events merge unless the data says otherwise (a pause inside a
+        // semantic \n line is not a boundary, and a boundary without \n is deliberate).
+        const eventBreak = !hasBoundaryNl && !!prev?.eventBreak;
+        const gapBreak = !hasBoundaryNl && prev && w.start - prev.end > LINE_BREAK_GAP_MS;
 
         if (current.words.length && (dataBreak || speakerBreak || eventBreak || gapBreak)) {
           flush();

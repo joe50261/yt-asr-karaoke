@@ -1,20 +1,84 @@
 """基於 fixture 複刻 yk-parse 的 parseCaptionEvents + groupLines，
 驗證 dual-track「同值碰撞排序」與 [data-variant] + .ykt-line 命中範圍。
-（行為同步 yk-parse：內嵌 \n、事件邊界 fallback、LINE_MAX_SPAN 安全閥、end clamp、gap 700。）"""
+（行為同步 yk-parse：內嵌 \n、事件邊界 fallback（boundary-\n 閘門）、行級 cue
+逐字內插、LINE_MAX_SPAN 安全閥、end clamp、gap 700。）"""
 import json
+import math
+import re
 
 LINE_BREAK_GAP_MS = 700
 LINE_MAX_SPAN_MS = 12000
 LINE_SPLIT_TARGET_MS = 4000
+CJK_RE = re.compile('[⺀-鿿　-〿가-힯＀-￯]')
+
+def _js_round(x):
+    return int(math.floor(x + 0.5))
+
+def _split_row_units(text):
+    units, pend, cur = [], '', ''
+    def flush():
+        nonlocal cur
+        if cur:
+            units.append(cur)
+        cur = ''
+    for ch in text:
+        if ch == ' ':
+            flush()
+            pend += ' '
+        elif CJK_RE.match(ch):
+            flush()
+            units.append(pend + ch)
+            pend = ''
+        else:
+            if not cur:
+                cur, pend = pend, ''
+            cur += ch
+    flush()
+    return units
 
 def parse(j):
+    events = [ev for ev in j.get('events', []) if ev.get('segs')]
+    word_level = any(s.get('tOffsetMs') is not None for ev in events for s in ev['segs'])
+    def produces_words(ev):
+        return any(s.get('utf8') and any(p for p in s['utf8'].split('\n')) for s in ev['segs'])
     w = []
-    for ev in j.get('events', []):
-        if not ev.get('segs'):
-            continue
+    for e, ev in enumerate(events):
         b = ev.get('tStartMs', 0)
-        e = b + ev.get('dDurationMs', 0)
+        block_end = b + ev.get('dDurationMs', 0)
         first_word_of_event = True
+        def push(text, start, end):
+            nonlocal first_word_of_event
+            if first_word_of_event:
+                if not ev.get('aAppend') and w:
+                    w[-1]['evb'] = True
+                first_word_of_event = False
+            w.append({'text': text, 'start': start, 'end': end, 'brk': False, 'evb': False})
+
+        rows = None if word_level else ''.join(s.get('utf8') or '' for s in ev['segs']).split('\n')
+        units = [ _split_row_units(r) for r in rows ] if rows is not None else None
+        unit_count = sum(len(r) for r in units) if units else 0
+        if unit_count > 1:
+            speech_end = block_end
+            for k in range(e + 1, len(events)):
+                if produces_words(events[k]):
+                    nb = events[k].get('tStartMs', 0)
+                    if b < nb < speech_end:
+                        speech_end = nb
+                    break
+            weight = lambda u: len(u.strip()) or 1
+            total = sum(weight(u) for r in units for u in r)
+            span = max(0, speech_end - b)
+            acc = 0
+            for r, row in enumerate(units):
+                for u in row:
+                    t0 = b + _js_round(span * acc / total)
+                    acc += weight(u)
+                    t1 = b + _js_round(span * acc / total)
+                    push(u, t0, t1)
+                if r < len(units) - 1 and w:
+                    w[-1]['brk'] = True
+            continue
+
         for s in ev['segs']:
             t = s.get('utf8')
             if not t:
@@ -26,11 +90,7 @@ def parse(j):
                     w[-1]['brk'] = True
                 if not part:
                     continue
-                if first_word_of_event:
-                    if not ev.get('aAppend') and w:
-                        w[-1]['evb'] = True
-                    first_word_of_event = False
-                w.append({'text': part, 'start': start, 'end': e, 'brk': False, 'evb': False})
+                push(part, start, block_end)
     w.sort(key=lambda x: x['start'])
     for i in range(len(w) - 1):
         if w[i]['end'] > w[i + 1]['start']:
@@ -71,7 +131,9 @@ def _split_oversized(line):
 def group(words):
     if not words:
         return []
-    hasb = any(x['brk'] for x in words)
+    # boundary-\n 閘門：classic 格式的 \n 落在事件邊界（brk 與 evb 同字共現）；只有
+    # 邊界有 \n 編碼時，無 \n 的邊界才代表刻意併行。行級 cue 格式的 \n 全在事件內。
+    has_boundary_nl = any(x['brk'] and x['evb'] for x in words)
     L = []
     cur = {'w': [], 'start': words[0]['start']}
     def flush():
@@ -85,8 +147,8 @@ def group(words):
         p = cur['w'][-1] if cur['w'] else None
         db = bool(p and p['brk'])
         sp = x['text'].lstrip().startswith('>>')
-        evb = (not hasb) and bool(p and p['evb'])
-        gap = (not hasb) and p and (x['start'] - p['end'] > LINE_BREAK_GAP_MS)
+        evb = (not has_boundary_nl) and bool(p and p['evb'])
+        gap = (not has_boundary_nl) and p and (x['start'] - p['end'] > LINE_BREAK_GAP_MS)
         if cur['w'] and (db or sp or evb or gap):
             flush()
             cur = {'w': [], 'start': x['start']}
