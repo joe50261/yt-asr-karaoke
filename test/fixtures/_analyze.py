@@ -45,16 +45,27 @@ def _split_oversized(line):
     ws = line['w']
     if len(ws) < 2 or ws[-1]['start'] - ws[0]['start'] <= LINE_MAX_SPAN_MS:
         return [line]
-    out, chunk = [], []
-    for x in ws:
-        if chunk and x['start'] - chunk[0]['start'] > LINE_SPLIT_TARGET_MS:
-            out.append(_line(chunk))
-            chunk = []
-            if x['text'].startswith(' '):
-                x['text'] = x['text'][1:]
-        chunk.append(x)
-    if chunk:
-        out.append(_line(chunk))
+    lo = LINE_SPLIT_TARGET_MS / 2
+    hi = LINE_SPLIT_TARGET_MS * 1.5
+    out, b = [], 0
+    while ws[-1]['start'] - ws[b]['start'] > hi:
+        cut, best, best_rel = -1, -1, 0
+        for i in range(b + 1, len(ws)):
+            rel = ws[i]['start'] - ws[b]['start']
+            if rel > hi:
+                if cut < 0:
+                    cut = i
+                break
+            if rel >= lo:
+                gap = ws[i]['start'] - ws[i - 1]['start']
+                if gap > best or (gap == best and
+                                  abs(rel - LINE_SPLIT_TARGET_MS) < abs(best_rel - LINE_SPLIT_TARGET_MS)):
+                    best, best_rel, cut = gap, rel, i
+        out.append(_line(ws[b:cut]))
+        if ws[cut]['text'].startswith(' '):
+            ws[cut]['text'] = ws[cut]['text'][1:]
+        b = cut
+    out.append(_line(ws[b:]))
     return out
 
 def group(words):

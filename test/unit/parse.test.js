@@ -93,6 +93,18 @@ describe('yk-parse.groupLines — rule (4): LINE_MAX_SPAN_MS safety valve', () =
     for (let i = 1; i < lines.length; i++) expect(lines[i].start).toBeGreaterThan(lines[i - 1].start);
   });
 
+  test('the cut lands on the largest NATIVE onset interval (a real pause), not a blind fixed grid', () => {
+    const parse = makeParse();
+    // Words every 300ms, but a 1500ms speech pause after w9 (rel 2700 → 4200, inside
+    // the first chunk's 2–6s flex zone). The cut must land exactly on that pause.
+    const segs = [];
+    for (let i = 0; i < 10; i++) segs.push({ utf8: (i ? ' w' : 'w') + i, tOffsetMs: i * 300 });
+    for (let i = 0; i < 40; i++) segs.push({ utf8: ' p' + i, tOffsetMs: 4200 + i * 300 });
+    const lines = parse.linesFromJson({ events: [{ tStartMs: 0, dDurationMs: 20000, segs }] });
+    expect(lines[0].text).toBe('w0 w1 w2 w3 w4 w5 w6 w7 w8 w9');
+    expect(lines[1].start).toBe(4200); // the word right after the pause opens the next line
+  });
+
   test('normal-length lines are untouched (no re-split below the threshold)', () => {
     const parse = makeParse();
     const lines = parse.linesFromJson(fixture('5ipNqGvS5Hw.en.asr.json3.json'));

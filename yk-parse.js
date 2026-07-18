@@ -147,19 +147,47 @@
       if (ws.length < 2 || ws[ws.length - 1].start - ws[0].start <= LINE_MAX_SPAN_MS) {
         return [line];
       }
+      // Cut where the speech actually pauses, not at a blind fixed interval: within a
+      // flex zone around the target span ([TARGET/2, TARGET*1.5]) pick the word
+      // boundary with the LARGEST native inter-onset interval — onsets are the only
+      // real per-word timing the data carries (per-word ends are invented, clamped to
+      // the next onset), so start[i] − start[i−1] is the pause signal. Ties resolve
+      // toward the target span. A zone with no onsets at all means one giant jump —
+      // the jump itself is the pause, cut right before it.
+      const lo = LINE_SPLIT_TARGET_MS / 2;
+      const hi = LINE_SPLIT_TARGET_MS * 1.5;
       const out = [];
-      let chunk = [];
-      for (const w of ws) {
-        if (chunk.length && w.start - chunk[0].start > LINE_SPLIT_TARGET_MS) {
-          out.push(lineFromWords(chunk));
-          chunk = [];
-          // The seam we just cut owned this word's boundary space (json3 spacing is a
-          // LEADING space) — a line-leading word carries none.
-          w.text = w.text.replace(/^ /, '');
+      let b = 0;
+      while (ws[ws.length - 1].start - ws[b].start > hi) {
+        let cut = -1;
+        let best = -1;
+        let bestRel = 0;
+        for (let i = b + 1; i < ws.length; i++) {
+          const rel = ws[i].start - ws[b].start;
+          if (rel > hi) {
+            if (cut < 0) cut = i; // empty zone: the words jump clean over it
+            break;
+          }
+          if (rel >= lo) {
+            const gap = ws[i].start - ws[i - 1].start;
+            if (
+              gap > best ||
+              (gap === best &&
+                Math.abs(rel - LINE_SPLIT_TARGET_MS) < Math.abs(bestRel - LINE_SPLIT_TARGET_MS))
+            ) {
+              best = gap;
+              bestRel = rel;
+              cut = i;
+            }
+          }
         }
-        chunk.push(w);
+        out.push(lineFromWords(ws.slice(b, cut)));
+        // The seam we just cut owned this word's boundary space (json3 spacing is a
+        // LEADING space) — a line-leading word carries none.
+        ws[cut].text = ws[cut].text.replace(/^ /, '');
+        b = cut;
       }
-      if (chunk.length) out.push(lineFromWords(chunk));
+      out.push(lineFromWords(ws.slice(b)));
       return out;
     }
 
