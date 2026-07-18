@@ -94,7 +94,7 @@ describe('yk-autodrive — stall 重踢按壞回應台帳指數退避（mock 注
       lastFailure: () => failure,
       anyInFlight: () => state.anyInFlight(),
     }));
-    load(s, ['yk-autodrive.js']);
+    load(s, ['yk-watch.js', 'yk-autodrive.js']);
     return { drive: di.resolve('autodrive').drive, selects, state };
   }
   const track = { languageCode: 'en' };

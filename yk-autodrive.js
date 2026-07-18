@@ -42,7 +42,7 @@
  */
 (function () {
   'use strict';
-  window.__YK__.register('autodrive', ['log', 'settings', 'yt', 'capture'], (log, settings, yt, capture) => {
+  window.__YK__.register('autodrive', ['log', 'settings', 'yt', 'capture', 'watch'], (log, settings, yt, capture, watch) => {
     const MAX_NUDGES = 8; // 漂移重選＋卡等重踢的共用上限（per one-shot；re-arm/reset 歸零）
     const STALL_TICKS = 600; // on-variant 空等幾個 rAF tick 判定 fetch 已死（60fps ≈ 10s）
     const START_GRACE_TICKS = 120; // 新影片先讓路 ~2s：播放器 init 自己會還原字幕偏好
@@ -69,6 +69,7 @@
       if (capture.anyInFlight()) return; // 在途守門：旗標留著，落地後下一 tick 再切
       // 重選當前變體（切一遍本體）；失敗（player 未 ready）旗標留著，下一 tick 重試。
       if (yt.selectAsrVariant(track, sel.tlang)) {
+        watch.markOwn(track, sel.tlang); // 觀測器歸因：這次選軌變化是我們發的
         redriveWanted = false;
         log.info('autodrive', 'v=' + vid, 'redrive: re-selected', log.variant(trackLang, sel.tlang));
       }
@@ -83,6 +84,7 @@
       if (nudges >= MAX_NUDGES) return false; // 超限：停手，穩態安靜
       if (capture.anyInFlight()) return false; // 本影片有字幕請求在路上：選了只會取消它
       if (!yt.selectAsrVariant(track, tlang)) return false; // player 未 ready：下 tick 再試，不計次
+      watch.markOwn(track, tlang);
       nudges++;
       stall = 0; // 剛發出新 fetch：卡等計數重新起算
       log.warn(
@@ -107,6 +109,7 @@
       if (++stall < threshold || nudges >= MAX_NUDGES) return;
       if (capture.anyInFlight()) return; // 本影片有字幕請求在路上：等它落地，別取消重來
       if (!yt.selectAsrVariant(track, tlang)) return;
+      watch.markOwn(track, tlang);
       nudges++;
       stall = 0;
       log.warn(
@@ -146,6 +149,7 @@
           // 白燒一次；等 body 落地入池，相位靠 haveOrig/haveTrans 照樣前進。
           if (!haveOrig) {
             if (!capture.anyInFlight() && yt.selectAsrVariant(track, '')) {
+              watch.markOwn(track, '');
               phase = 'orig'; // original first (translation-direct never loads it)
               stall = 0;
               log.info('autodrive', 'v=' + vid, 'step 1/2: select', log.variant(trackLang, ''), '— waiting for its body');
@@ -154,6 +158,7 @@
             phase = 'done'; // already there (player on target, both loaded)
             log.info('autodrive', 'v=' + vid, 'done: already on', log.variant(trackLang, target), 'with both bodies');
           } else if (!capture.anyInFlight() && yt.selectAsrVariant(track, target)) {
+            watch.markOwn(track, target);
             phase = 'trans';
             stall = 0;
             log.info('autodrive', 'v=' + vid, 'step 2/2: select', log.variant(trackLang, target), '(', log.variant(trackLang, ''), 'body already pooled )');
@@ -162,6 +167,7 @@
         case 'orig': // waiting for the original's body before switching to the translation
           if (haveOrig) {
             if (yt.selectAsrVariant(track, target)) {
+              watch.markOwn(track, target);
               phase = 'trans';
               stall = 0;
               log.info('autodrive', 'v=' + vid, 'step 2/2:', log.variant(trackLang, ''), 'body captured — select', log.variant(trackLang, target));

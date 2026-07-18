@@ -177,6 +177,18 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   `videoDetails.videoId` 對當前 URL 驗明正身：SPA 導航後
   `window.ytInitialPlayerResponse` 是上一次整頁載入的殭屍資料，不驗會
   綁到舊影片的軌（自動翻譯在導航後整個不啟動）。
+- `yk-watch.js` —— **播放器觀測器**：每 tick 快照字幕選軌全貌
+  （`yt.captionState`：含手動軌、手動軌翻譯、字幕關閉——
+  `currentAsrSelection` 之外的盲區）與播放器狀態，只在**變化的瞬間**
+  記 log：毫秒時戳（可與 DevTools Network 對時）、當下播放時間、廣告
+  狀態，成因標注 `[own-select]`（autodrive 的 setOption 落地；每次
+  select 後 `markOwn` 登記、落地一次即銷、~2s 歸因窗過期）／
+  `[external]`（播放器自己重置或使用者操作）／`[baseline]`（本影片
+  首次觀測）；playerState 轉移逐筆記錄（重置的對帳錨點）。YT 會在同
+  session 的不明生命週期點重置選軌（偏好 reconcile），這是抓「哪個
+  瞬間、前後發生什麼」的材料。engine 每 tick 呼叫 `tick()`（導航守門
+  之前——導航窗口內的重置也要看得到）、teardown 呼叫 `reset()`。
+  穩態零輸出。
 - `yk-ui.js` —— player-chrome 共用 UI 機制：藥丸鈕掛載（`mountPillButton`，
   Karaoke 開關 / ⚙ / 字幕全文三顆共用）與 pointer-capture 拖曳調寬
   （`attachDragResize`，拖出視窗放開不會掛死）。

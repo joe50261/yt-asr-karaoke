@@ -11,7 +11,7 @@ function loadNative() {
   const s = makeSandbox();
   load(s, [
     'yk-di.js', 'yk-config.js', 'yk-log.js', 'yk-settings.js', 'yk-timing.js',
-    'yk-parse.js', 'yk-yt.js', 'yk-capture.js', 'yk-autodrive.js', 'yk-native.js',
+    'yk-parse.js', 'yk-yt.js', 'yk-watch.js', 'yk-capture.js', 'yk-autodrive.js', 'yk-native.js',
   ]);
   const di = s.window.__YK__;
   return { s, di, native: di.resolve('native'), parse: di.resolve('parse'), timing: di.resolve('timing') };

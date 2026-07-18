@@ -143,6 +143,37 @@
       return { tlang: cur.translationLanguage?.languageCode || '' };
     }
 
+    // 播放器字幕狀態的完整快照（yk-watch 的觀測口）：不限 asr——手動軌、手動軌的
+    // 翻譯、字幕關閉都要看得見（currentAsrSelection 對這些一律回 null，是觀測盲區）。
+    // null = 播放器/字幕 API 未就緒（無可觀測）。
+    function captionState() {
+      const player = getPlayerEl();
+      if (!player?.getOption) return null;
+      let cur;
+      try {
+        cur = player.getOption('captions', 'track');
+      } catch {
+        return null;
+      }
+      let playerState = null;
+      try {
+        playerState = typeof player.getPlayerState === 'function' ? player.getPlayerState() : null;
+      } catch {
+        playerState = null;
+      }
+      const video = getVideo();
+      return {
+        off: !cur || !cur.languageCode, // 字幕關閉（或未選任何軌）
+        lang: cur?.languageCode || '',
+        kind: cur?.kind || '',
+        name: cur?.name?.simpleText || '',
+        tlang: cur?.translationLanguage?.languageCode || '',
+        playerState, // -1 unstarted / 0 ended / 1 playing / 2 paused / 3 buffering / 5 cued
+        t: video ? video.currentTime : null,
+        ad: isAdShowing(),
+      };
+    }
+
     // Drive the player to display ONE asr variant: tlang === '' selects the original
     // auto-caption; otherwise its auto-translation to `tlang`. setOption makes the
     // PLAYER fetch the body (its request carries the pot token); the capture hook
@@ -245,6 +276,7 @@
       isAdShowing,
       pickAutoCaptionTrack,
       currentAsrSelection,
+      captionState,
       selectAsrVariant,
       translationLanguages,
       waitForVideo,

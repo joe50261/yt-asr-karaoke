@@ -438,6 +438,7 @@ describe('yk-engine — tick 的 native 分支 / 導航守門 / teardown（全 m
       drive: () => calls.drives++,
       reset: () => calls.autodriveResets++,
     }));
+    di.register('watch', [], () => ({ tick() {}, markOwn() {}, reset() {} }));
     // native 的 mock：sync 把 on 拉到 nat.next（sync/reset 本體已在 native.test.js 隔離測過；
     // 這裡只驗 engine 對契約的使用：切換瞬間的 DOM 交接、isOn 分支、reset 呼叫）
     const nat = { on: false, next: true };
@@ -620,7 +621,7 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
         return true;
       },
     }));
-    load(s, ['yk-autodrive.js']);
+    load(s, ['yk-watch.js', 'yk-autodrive.js']); // real watch（deps：上面的 log/yt mocks）
     const ad_ = di.resolve('autodrive');
     const TRACK = { languageCode: 'en' };
     // 讓路期（START_GRACE_TICKS=120）：新影片 bind 後 autodrive 先讓播放器自己的初始
