@@ -186,9 +186,10 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   page-global），讓原生模式換掉**播放器**收到的 body。無 transform 時
   ＝與被動模式位元組等同。另記兩本 per-variant 台帳供 yk-autodrive
   節流：**壞回應台帳**（`lastFailure`：HTTP 狀態＋連續次數，429/5xx/
-  空 200 入帳、成功入池清帳）與**在途台帳**（`inFlight`：send 起算、
-  loadend 結清、30 秒 TTL 防殘影）；abort（請求被 session 重建或選軌
-  更替取代）逐筆記 log 帶變體標籤，方便對帳，但不入失敗台帳。
+  空 200 入帳、成功入池清帳；asr-only）與**在途台帳**（`anyInFlight`：
+  send 起算、loadend 結清、30 秒 TTL 防殘影；涵蓋**所有** timedtext
+  含手動軌——捕獲與 transform 仍 asr-only）；abort（請求被選軌變更或
+  session 重建取代）逐筆記 log 帶變體標籤，方便對帳，但不入失敗台帳。
   補丁只安裝一次（`__YK_NET__`）但**不含任何邏輯**：每個決策都經 page-global
   的 `__YK_NETIMPL__` 呼叫、每次 resolve 重指，所以熱抽換這個模組真的會改變
   live hook 跑的邏輯（MCP 注入的 session 能驗證自己的修改）。
@@ -209,10 +210,14 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   （與切一遍同一招，計 rAF tick 不設計時器）；重踢門檻按 capture 的
   壞回應台帳（`lastFailure`）指數退避，429 限流下不盲踢；漂移重選對
   帳上有失敗紀錄的變體也改走退避。所有 setOption 前先過**在途守門**
-  （`capture.inFlight`）：同變體請求還在路上就不重選——abort 只是
-  客戶端不讀回應，伺服器端已計入配額，重選等於取消在途請求再白燒
-  一次額度。兩者共用每輪 one-shot 上限 8 次的預算，防止與使用者
-  對戰或洗版。每個動作（選軌、相位轉移、
+  （`capture.anyInFlight`）：本影片**任何** timedtext 請求（含手動軌
+  ——偏好還原的初始載入常是）還在路上就不選軌——播放器只有一條字幕
+  載入管線，任何選軌都會 abort 在途請求，而 abort 只是客戶端不讀
+  回應，伺服器端已計入配額，等於取消再白燒一次額度。新影片另有
+  **讓路期**（~2 秒）：bind 當下不搶 setOption，先讓播放器 init 自己
+  的偏好還原出手（有 body 落池即提前結束；同影片換目標語言不適用），
+  避免在錯誤時機與內建功能 race。兩者共用每輪 one-shot 上限 8 次的
+  預算，防止與使用者對戰或洗版。每個動作（選軌、相位轉移、
   re-arm、切一遍）都記 log 並帶 `v=<影片id>`，多影片連續導航時可逐行
   對上。engine 每 tick 呼叫 `drive()`、teardown 時呼叫 `reset()`。
 - `yk-native.js` —— **原生播放模式**，獨立的可熱抽換模組：純函數

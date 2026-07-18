@@ -68,15 +68,19 @@
       return NATIVE_R ? NATIVE_R.call(xhr) : xhr.responseText;
     }
 
+    // 在途/abort 觀測的範圍：所有 timedtext（含手動軌）。播放器只有一條字幕載入
+    // 管線——任何 setOption 都會 abort 任何在途字幕請求，而偏好還原的初始載入可能
+    // 是手動軌（name=…、無 kind=asr）；守門只看 asr 的話，那筆請求對台帳隱形，
+    // autodrive 照樣把它撞掉。
+    function isTimedtextUrl(url) {
+      return typeof url === 'string' && url.includes('/api/timedtext');
+    }
+
     // The asr track's request is the only one we want, and it is precisely the one
     // whose URL has the `kind=asr` param. Manual tracks carry `caps=asr` but never
     // `kind=asr`, so this excludes them.
     function isAsrTimedtextUrl(url) {
-      return (
-        typeof url === 'string' &&
-        url.includes('/api/timedtext') &&
-        /[?&]kind=asr(?:&|$)/.test(url)
-      );
+      return isTimedtextUrl(url) && /[?&]kind=asr(?:&|$)/.test(url);
     }
 
     // Apply the registered transform to ONE original body for the player, defensively.
@@ -138,11 +142,11 @@
       return failures.get(failureKey(yt.currentVideoId(), track.languageCode || '', tlang)) || null;
     }
 
-    // 在途台帳：同變體有請求還在路上時，autodrive 不得再 setOption 選它——重選會讓
+    // 在途台帳：本影片有任何字幕請求還在路上時，autodrive 不得 setOption——選軌會讓
     // 播放器 abort 在途請求重發，而 abort 只是客戶端不讀回應、伺服器端已收單計入
-    // 配額（429 限流下每個被取消的請求都白燒一次額度）。記 performance.now 時戳而
-    // 非計數：loadend 若因頁面拆除沒送達，殘影會在 INFLIGHT_TTL_MS 後自動過期，
-    // 不會把 inFlight 永久卡在 true。
+    // 配額（429 限流下每個被取消的請求都白燒一次額度）。範圍是**全部 timedtext**
+    // （含手動軌；見 isTimedtextUrl 註）。記 performance.now 時戳而非計數：loadend
+    // 若因頁面拆除沒送達，殘影會在 INFLIGHT_TTL_MS 後自動過期，不會永久卡 true。
     const inflight = new Map(); // `${v}|${lang}|${tlang}` -> [startedAt, ...]
     const INFLIGHT_TTL_MS = 30000;
     function noteSent(url) {
@@ -165,20 +169,25 @@
     function noteAborted(url) {
       const id = variantFromUrl(url);
       if (!id) return;
-      // 每個取消記一行帶變體標籤（action edge）：取消通常來自播放器 session 重建或
-      // 選軌更替把在途請求換掉——伺服器端照樣計入配額，對帳時要能逐筆點名。
+      // 每個取消記一行帶變體標籤（action edge）：取消來自「選軌變更把在途請求換掉」
+      // ——我們自己的 setOption 或播放器 session 重建都會。伺服器端照樣計入配額，
+      // 對帳時要能逐筆點名。
       log.info('capture', 'timedtext request aborted (superseded) for', log.variant(id.lang, id.tlang));
     }
-    function inFlight(track, tlang) {
-      const list = inflight.get(failureKey(yt.currentVideoId(), track.languageCode || '', tlang));
-      if (!list) return false;
+    // 本影片任何在途字幕請求（不分變體/軌種）——autodrive 所有 setOption 的統一守門。
+    function anyInFlight() {
+      const prefix = yt.currentVideoId() + '|';
       const cutoff = performance.now() - INFLIGHT_TTL_MS;
-      return list.some((t) => t > cutoff);
+      for (const [key, list] of inflight) {
+        if (key.startsWith(prefix) && list.some((t) => t > cutoff)) return true;
+      }
+      return false;
     }
 
     // Re-point the live patch behaviour to THIS resolve's functions. Runs on every factory
     // resolve, so a hot-swap of yk-capture (or of yk-parse, which re-resolves us) takes
     // effect inside the already-installed fetch/XHR closures immediately.
+    impl.isTimedtextUrl = isTimedtextUrl;
     impl.isAsrTimedtextUrl = isAsrTimedtextUrl;
     impl.nativeText = nativeText;
     impl.nativeResponse = nativeResponse;
@@ -195,12 +204,22 @@
       const origFetch = window.fetch;
       window.fetch = function (...args) {
         const url = typeof args[0] === 'string' ? args[0] : args[0]?.url;
-        if (!impl.isAsrTimedtextUrl(url)) return origFetch.apply(this, args);
+        if (!impl.isTimedtextUrl(url)) return origFetch.apply(this, args);
+        const pending = origFetch.apply(this, args);
+        impl.noteSent(url);
+        // 非 asr 的 timedtext（手動軌）：只結清在途台帳，body 原樣放行。
+        if (!impl.isAsrTimedtextUrl(url)) {
+          return pending.then(
+            (res) => (impl.noteSettled(url), res),
+            (e) => {
+              impl.noteSettled(url);
+              throw e;
+            },
+          );
+        }
         // asr fetch: always capture the original; serve cooked to the caller iff a
         // transform is registered. (YouTube uses XHR for timedtext in practice; this
         // path is kept symmetric for robustness.)
-        const pending = origFetch.apply(this, args);
-        impl.noteSent(url);
         return pending.then(async (res) => {
           impl.noteSettled(url);
           let text = '';
@@ -229,9 +248,32 @@
         return open.call(this, method, url, ...rest);
       };
       XMLHttpRequest.prototype.send = function (...args) {
-        if (impl.isAsrTimedtextUrl(String(this.__ykUrl))) {
-          const url = String(this.__ykUrl);
-          impl.noteSent(url);
+        const sendUrl = String(this.__ykUrl);
+        if (impl.isTimedtextUrl(sendUrl)) {
+          // 在途/abort 觀測涵蓋所有 timedtext（含手動軌）；捕獲與失敗台帳仍 asr-only。
+          try {
+            impl.noteSent(sendUrl);
+          } catch {
+            /* ignore */
+          }
+          this.addEventListener('abort', () => {
+            try {
+              impl.noteAborted(sendUrl); // 被取代／取消：只記 log，不入失敗台帳（無伺服器裁決）
+            } catch {
+              /* ignore */
+            }
+          });
+          // load / error / abort 三種結局都會走 loadend：在途台帳只在這裡結清一次。
+          this.addEventListener('loadend', () => {
+            try {
+              impl.noteSettled(sendUrl);
+            } catch {
+              /* ignore */
+            }
+          });
+        }
+        if (impl.isAsrTimedtextUrl(sendUrl)) {
+          const url = sendUrl;
           // Capture the ORIGINAL via the native getter (never this.responseText, which we
           // shadow next — reading it would store the COOKED body and corrupt the pool).
           this.addEventListener('load', () => {
@@ -244,21 +286,6 @@
           this.addEventListener('error', () => {
             try {
               impl.noteResult(url, 0, false); // 網路層死亡（status 0）也入台帳
-            } catch {
-              /* ignore */
-            }
-          });
-          this.addEventListener('abort', () => {
-            try {
-              impl.noteAborted(url); // 被取代／取消：只記 log，不入失敗台帳（無伺服器裁決）
-            } catch {
-              /* ignore */
-            }
-          });
-          // load / error / abort 三種結局都會走 loadend：在途台帳只在這裡結清一次。
-          this.addEventListener('loadend', () => {
-            try {
-              impl.noteSettled(url);
             } catch {
               /* ignore */
             }
@@ -366,7 +393,7 @@
       capturedJsonForVariant,
       hasCapturedVariant,
       lastFailure,
-      inFlight,
+      anyInFlight,
       registerTransform,
       clearTransform,
       dispose: clearTransform,

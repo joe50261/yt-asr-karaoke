@@ -45,11 +45,13 @@
   window.__YK__.register('autodrive', ['log', 'settings', 'yt', 'capture'], (log, settings, yt, capture) => {
     const MAX_NUDGES = 8; // 漂移重選＋卡等重踢的共用上限（per one-shot；re-arm/reset 歸零）
     const STALL_TICKS = 600; // on-variant 空等幾個 rAF tick 判定 fetch 已死（60fps ≈ 10s）
+    const START_GRACE_TICKS = 120; // 新影片先讓路 ~2s：播放器 init 自己會還原字幕偏好
     let phase = 'start'; // start → orig → trans → done (one-shot per video / per target)
     let vid = ''; // current video id
     let lastTarget = ''; // last autoDualLang we acted on
     let nudges = 0; // 本輪 one-shot 已用掉的重選次數（漂移＋卡等共用）
     let stall = 0; // 連續「在變體上但 body 未到」的 tick 數（任何 select/轉移歸零）
+    let grace = 0; // 讓路期已數的 tick（影片變更歸零；目標變更不適用，直接視為期滿）
     let redriveWanted = false; // 「切一遍」旗標：下一個可行 tick 重選當前變體一次
 
     function redrive() {
@@ -64,7 +66,7 @@
         log.info('autodrive', 'v=' + vid, 'redrive skipped: no asr selection on screen');
         return;
       }
-      if (capture.inFlight(track, sel.tlang)) return; // 在途守門：旗標留著，落地後下一 tick 再切
+      if (capture.anyInFlight()) return; // 在途守門：旗標留著，落地後下一 tick 再切
       // 重選當前變體（切一遍本體）；失敗（player 未 ready）旗標留著，下一 tick 重試。
       if (yt.selectAsrVariant(track, sel.tlang)) {
         redriveWanted = false;
@@ -79,7 +81,7 @@
     // 我們自己不再貢獻取消。
     function nudge(track, trackLang, tlang) {
       if (nudges >= MAX_NUDGES) return false; // 超限：停手，穩態安靜
-      if (capture.inFlight(track, tlang)) return false; // 已在路上：選了只會取消它
+      if (capture.anyInFlight()) return false; // 本影片有字幕請求在路上：選了只會取消它
       if (!yt.selectAsrVariant(track, tlang)) return false; // player 未 ready：下 tick 再試，不計次
       nudges++;
       stall = 0; // 剛發出新 fetch：卡等計數重新起算
@@ -103,7 +105,7 @@
       const fail = capture.lastFailure(track, tlang);
       const threshold = STALL_TICKS * Math.pow(2, Math.min(fail ? fail.count : 0, 5));
       if (++stall < threshold || nudges >= MAX_NUDGES) return;
-      if (capture.inFlight(track, tlang)) return; // 已在路上：等它落地，別取消重來
+      if (capture.anyInFlight()) return; // 本影片有字幕請求在路上：等它落地，別取消重來
       if (!yt.selectAsrVariant(track, tlang)) return;
       nudges++;
       stall = 0;
@@ -130,13 +132,20 @@
       // 知道狀態機才看得懂。
       switch (phase) {
         case 'start':
+          // 讓路期：bind 當下就 setOption 是與內建功能 race 的錯誤時機——播放器 init
+          // 自己會還原字幕偏好（發 timedtext，可能是手動軌），我們搶先選軌會 abort 它
+          // 的在途請求（配額白燒），或被它隨後蓋回來（漂移→nudge 再燒一次）。新影片
+          // 先等 START_GRACE_TICKS 讓它出手：期間有請求在途由 anyInFlight 守門等落地；
+          // 池裡已有任一 body＝它已走完，立即開始。目標語言變更（同影片、使用者動作
+          // 當下）沒有這個 race，不等。
+          if (!haveOrig && !haveTrans && ++grace < START_GRACE_TICKS) break;
           // 'start' always drives toward the target (even if both bodies are already
           // captured) so a 關閉→on after the player drifted re-selects the translation.
           // 在途守門（與 nudge/stallRekick 同則）：想要的變體已有請求在路上（例如播放器
           // 自己還原字幕偏好的初始 fetch）就不搶著 setOption——重選會 abort 它、配額
           // 白燒一次；等 body 落地入池，相位靠 haveOrig/haveTrans 照樣前進。
           if (!haveOrig) {
-            if (!capture.inFlight(track, '') && yt.selectAsrVariant(track, '')) {
+            if (!capture.anyInFlight() && yt.selectAsrVariant(track, '')) {
               phase = 'orig'; // original first (translation-direct never loads it)
               stall = 0;
               log.info('autodrive', 'v=' + vid, 'step 1/2: select', log.variant(trackLang, ''), '— waiting for its body');
@@ -144,7 +153,7 @@
           } else if (onTarget && haveTrans) {
             phase = 'done'; // already there (player on target, both loaded)
             log.info('autodrive', 'v=' + vid, 'done: already on', log.variant(trackLang, target), 'with both bodies');
-          } else if (!capture.inFlight(track, target) && yt.selectAsrVariant(track, target)) {
+          } else if (!capture.anyInFlight() && yt.selectAsrVariant(track, target)) {
             phase = 'trans';
             stall = 0;
             log.info('autodrive', 'v=' + vid, 'step 2/2: select', log.variant(trackLang, target), '(', log.variant(trackLang, ''), 'body already pooled )');
@@ -191,6 +200,9 @@
       // the latter covers switching A→B directly, and 關閉 (target='') which then no-ops
       // below. Without this, 'done' would latch and a new target would never drive.
       if (cur !== vid || target !== lastTarget) {
+        // 讓路期只給影片變更（新頁面的播放器 init 才有偏好還原 race）；同影片換目標
+        // 是使用者當下的動作，直接視為期滿。
+        grace = cur !== vid ? 0 : START_GRACE_TICKS;
         vid = cur;
         lastTarget = target;
         phase = 'start';
@@ -208,6 +220,7 @@
       lastTarget = '';
       nudges = 0;
       stall = 0;
+      grace = 0;
       redriveWanted = false;
     }
 

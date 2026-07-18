@@ -52,18 +52,20 @@ describe('yk-capture — 壞回應台帳（real-getter fake XHR）', () => {
     expect(capture.hasCapturedVariant(track, '')).toBe(true);
   });
 
-  test('在途台帳：send 起算、loadend 結清；abort 也結清且不入失敗台帳', () => {
+  test('在途台帳涵蓋所有 timedtext（含手動軌）；abort 結清且不入失敗台帳', () => {
     const { capture, start } = setup();
-    expect(capture.inFlight(track, 'zh-Hans')).toBe(false);
-    const xhr = start(ASR('zh-Hans'));
-    expect(capture.inFlight(track, 'zh-Hans')).toBe(true);
-    expect(capture.inFlight(track, '')).toBe(false); // 只算自己的變體
-    xhr.abort(); // 播放器把在途請求換掉（session 重建／選軌更替）
-    expect(capture.inFlight(track, 'zh-Hans')).toBe(false);
+    expect(capture.anyInFlight()).toBe(false);
+    // 手動軌（name=…、無 kind=asr）：播放器偏好還原的初始載入常是這種——守門必須看得到，
+    // 否則 autodrive 的 setOption 照樣把它撞掉。
+    const manual = start('https://www.youtube.com/api/timedtext?v=abc&lang=en&name=Default&tlang=zh-Hans&fmt=json3');
+    expect(capture.anyInFlight()).toBe(true);
+    manual.abort(); // 被選軌變更／session 重建換掉
+    expect(capture.anyInFlight()).toBe(false);
     expect(capture.lastFailure(track, 'zh-Hans')).toBeNull(); // 無伺服器裁決，不記失敗
     const xhr2 = start(ASR('zh-Hans'));
+    expect(capture.anyInFlight()).toBe(true);
     xhr2.__fireLoad(GOOD_BODY);
-    expect(capture.inFlight(track, 'zh-Hans')).toBe(false);
+    expect(capture.anyInFlight()).toBe(false);
     expect(capture.hasCapturedVariant(track, 'zh-Hans')).toBe(true);
   });
 });
@@ -76,7 +78,8 @@ describe('yk-autodrive — stall 重踢按壞回應台帳指數退避（mock 注
     load(s, ['yk-di.js']);
     const di = s.window.__YK__;
     const selects = [];
-    const state = { inFlight: opts.inFlight || (() => false) };
+    const state = { anyInFlight: opts.anyInFlight || (() => false) };
+    const hasCaptured = opts.hasCaptured || ((_t, tlang) => tlang === '');
     di.register('log', [], () => ({ info() {}, warn() {}, error() {}, variant: (l, t) => (t ? l + '→' + t : l) }));
     di.register('settings', [], () => ({ current: { autoDualLang: 'zh-Hans' } }));
     di.register('yt', [], () => ({
@@ -87,9 +90,9 @@ describe('yk-autodrive — stall 重踢按壞回應台帳指數退避（mock 注
       selectAsrVariant: (_t, tlang) => (selects.push(tlang), true),
     }));
     di.register('capture', [], () => ({
-      hasCapturedVariant: (_t, tlang) => tlang === '', // 原文已入池，翻譯永遠缺
+      hasCapturedVariant: (...a) => hasCaptured(...a), // 預設：原文已入池，翻譯永遠缺
       lastFailure: () => failure,
-      inFlight: (...a) => state.inFlight(...a),
+      anyInFlight: () => state.anyInFlight(),
     }));
     load(s, ['yk-autodrive.js']);
     return { drive: di.resolve('autodrive').drive, selects, state };
@@ -117,13 +120,22 @@ describe('yk-autodrive — stall 重踢按壞回應台帳指數退避（mock 注
     expect(ticksUntilRekick(drive, selects)).toBe(STALL_TICKS * 4);
   });
 
-  test('在途守門：目標變體請求還在路上時一律不 setOption（不取消、不燒配額）', () => {
-    // 例如播放器自己還原字幕偏好的初始 fetch 還在飛：autodrive 不得搶著重選。
-    const { drive, selects, state } = setup(null, { inFlight: (_t, tlang) => tlang === 'zh-Hans' });
+  test('在途守門：本影片任何字幕請求在路上時一律不 setOption（不取消、不燒配額）', () => {
+    // 例如播放器自己還原字幕偏好的初始 fetch（可能是手動軌）還在飛：autodrive 不得
+    // 搶著選軌——setOption 會 abort 它，伺服器端已計入配額。
+    const { drive, selects, state } = setup(null, { anyInFlight: () => true });
     for (let t = 0; t <= STALL_TICKS * 2; t++) drive(track, 'en');
     expect(selects).toHaveLength(0); // start 相位的首選被守門擋下、相位原地等待
-    state.inFlight = () => false; // 請求落地：下一 tick 恢復驅動
+    state.anyInFlight = () => false; // 請求落地：下一 tick 恢復驅動
     drive(track, 'en');
     expect(selects).toEqual(['zh-Hans']);
+  });
+
+  test('讓路期：新影片 bind 後 ~2s（120 tick）不驅動，讓播放器內建的初始載入先出手', () => {
+    const { drive, selects } = setup(null, { hasCaptured: () => false }); // 池全空：讓路期生效
+    for (let t = 1; t < 120; t++) drive(track, 'en');
+    expect(selects).toHaveLength(0); // 期內：零 setOption，內建功能先走
+    drive(track, 'en'); // 第 120 tick 期滿、仍無任何動靜 → 才開始驅動
+    expect(selects).toEqual(['']);
   });
 });

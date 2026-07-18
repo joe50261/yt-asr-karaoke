@@ -601,7 +601,7 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
     di.register('capture', [], () => ({
       hasCapturedVariant: (_t, k) => pool.has(k), // autodrive 只問存在性（免 parse API）
       lastFailure: () => null, // 壞回應台帳／在途台帳：本組測試走「乾淨網路」情境，
-      inFlight: () => false, //  節流語義由 autodrive.test.js 專測
+      anyInFlight: () => false, //  節流語義由 autodrive.test.js 專測
     }));
     let vid = 'abc';
     let selTlang = null; // null = 未選任何 asr 變體
@@ -623,6 +623,11 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
     load(s, ['yk-autodrive.js']);
     const ad_ = di.resolve('autodrive');
     const TRACK = { languageCode: 'en' };
+    // 讓路期（START_GRACE_TICKS=120）：新影片 bind 後 autodrive 先讓播放器自己的初始
+    // 字幕載入出手，池空時期滿才驅動。本套測項聚焦期滿後的驅動語義：setup 先空轉到
+    // 只剩最後一 tick（119 次，無 select、'armed' 一行之外零輸出），各測項的第一個
+    // drive() 即期滿開始驅動——與引入讓路期前的行為逐 tick 對齊。
+    for (let i = 0; i < 119; i++) ad_.drive(TRACK, 'en');
     return {
       ad: ad_, selects, cur, logCalls,
       drive: () => ad_.drive(TRACK, 'en'),
@@ -757,6 +762,7 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
     for (let i = 0; i < 50; i++) c.drive();
     expect(c.logCalls.length).toBe(logsAtCap); // 超限後穩態也零輸出（不洗版）
     c.ad.reset(); // teardown re-arm → 預算歸零
+    for (let i = 0; i < 119; i++) c.drive(); // 新 one-shot 的讓路期先空轉（池空、無 select）
     c.drive();
     expect(c.selects).toHaveLength(1 + 8 + 1); // 新 one-shot：start 相位重新可驅動
     c.drive();
