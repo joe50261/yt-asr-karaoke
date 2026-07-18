@@ -129,6 +129,31 @@ describe('yk-parse — line-level roll-up asr (real captured body: cue-sized seg
     expect(w[w.length - 1].end).toBe(2000); // clipped to the next cue's onset
   });
 
+  test('a stray trailing \\n on one cue must NOT flip the whole track into classic merging', () => {
+    const parse = makeParse();
+    // "rowB two\n" ends with \n: breakAfter would land on the cue's LAST word, where
+    // the next event's eventBreak stamp collides with it — flipping hasBoundaryNl and
+    // silently merging every unmarked boundary in the track.
+    const lines = parse.linesFromJson({ events: [
+      { tStartMs: 0, dDurationMs: 6000, segs: [{ utf8: 'rowA one\nrowB two\n' }] },
+      { tStartMs: 4000, dDurationMs: 6000, segs: [{ utf8: 'rowC three\nrowD four' }] },
+      { tStartMs: 8000, dDurationMs: 4000, segs: [{ utf8: 'rowE five' }] },
+    ] });
+    expect(lines.map((l) => l.text)).toEqual(['rowA one', 'rowB two', 'rowC three', 'rowD four', 'rowE five']);
+  });
+
+  test('single-unit cues with stray \\n ("hi\\n", "\\nhi") do not poison the boundary gate either', () => {
+    const parse = makeParse();
+    for (const stray of ['hi\n', '\nhi']) {
+      const lines = parse.linesFromJson({ events: [
+        { tStartMs: 0, dDurationMs: 3000, segs: [{ utf8: stray }] },
+        { tStartMs: 2000, dDurationMs: 3000, segs: [{ utf8: 'second cue' }] },
+        { tStartMs: 4000, dDurationMs: 3000, segs: [{ utf8: 'third cue' }] },
+      ] });
+      expect(lines.map((l) => l.text)).toEqual(['hi', 'second cue', 'third cue']);
+    }
+  });
+
   test('word-level tracks are untouched: an offset-less multi-word event stays ONE seg-word', () => {
     const parse = makeParse();
     const lines = parse.linesFromJson({ events: [

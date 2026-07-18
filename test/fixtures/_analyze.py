@@ -91,6 +91,12 @@ def parse(j):
                 if not part:
                     continue
                 push(part, start, block_end)
+    # 行級軌的 \n 從不編碼邊界（是列分隔）：邊界字上 brk 與 evb 相撞會誤翻
+    # has_boundary_nl 閘門——邊界字只留事件斷行訊號。
+    if not word_level:
+        for x in w:
+            if x['evb']:
+                x['brk'] = False
     w.sort(key=lambda x: x['start'])
     for i in range(len(w) - 1):
         if w[i]['end'] > w[i + 1]['start']:

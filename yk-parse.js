@@ -127,6 +127,15 @@
           }
         }
       }
+      // A LINE-level track never encodes boundaries with \n — its \n are row seams.
+      // But a cue with a trailing/leading \n ("row\n") lands breakAfter on an
+      // event-LAST word, where the next event's eventBreak stamp collides with it and
+      // flips the track-wide hasBoundaryNl gate (one stray character would silently
+      // turn off event/gap breaking for the whole track). Keep the two signals
+      // disjoint: on boundary words the event break IS the break.
+      if (!wordLevel) {
+        for (const w of words) if (w.eventBreak) w.breakAfter = false;
+      }
       words.sort((a, b) => a.start - b.start);
       for (let i = 0; i < words.length - 1; i++) {
         const next = words[i + 1];
