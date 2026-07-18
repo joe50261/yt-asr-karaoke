@@ -600,6 +600,8 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
     const pool = new Set(); // 已捕獲的變體 key（'' = 原文）
     di.register('capture', [], () => ({
       hasCapturedVariant: (_t, k) => pool.has(k), // autodrive 只問存在性（免 parse API）
+      lastFailure: () => null, // 壞回應台帳／在途台帳：本組測試走「乾淨網路」情境，
+      inFlight: () => false, //  節流語義由 autodrive.test.js 專測
     }));
     let vid = 'abc';
     let selTlang = null; // null = 未選任何 asr 變體

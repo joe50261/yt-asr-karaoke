@@ -98,8 +98,82 @@
     // an early/empty/error response would otherwise sit in the pool under its own URL forever
     // and make capturedJsonForVariant warn on every render tick. Validate once here so the
     // pool only ever holds usable json3 — and hasCapturedVariant can trust presence alone.
+    // Returns whether the body was stored (noteResult keys the failure ledger off this).
     function storeOriginal(url, text) {
-      if (text && parse.captionJsonFromText(text)) captured.set(url, text);
+      const ok = !!(text && parse.captionJsonFromText(text));
+      if (ok) captured.set(url, text);
+      return ok;
+    }
+
+    // 壞回應台帳：per-VARIANT（URL 的 pot/expire 每次都轉，按 URL 記連續失敗永遠是 1）。
+    // storeOriginal 擋下的回應以前「觀察不到地死」——autodrive 只能盲目 10 秒重踢；
+    // YouTube 對 tlang=（自動翻譯）路徑回 429 限流時，盲踢只會延長封鎖。這裡記下
+    // HTTP 狀態與連續次數，lastFailure 讓 autodrive 據此指數退避；成功入池即清帳。
+    const failures = new Map(); // `${v}|${lang}|${tlang}` -> { status, count }
+    const FAILURES_MAX = 64; // 跨導航累積的變體數上限（與 memo 同思路，防整 session 增長）
+    const failureKey = (v, lang, tlang) => v + '|' + lang + '|' + tlang;
+    function noteResult(url, status, stored) {
+      const id = variantFromUrl(url);
+      if (!id) return;
+      const key = failureKey(id.v, id.lang, id.tlang);
+      if (stored) {
+        failures.delete(key);
+        return;
+      }
+      const prev = failures.get(key);
+      const count = (prev ? prev.count : 0) + 1;
+      failures.delete(key); // 重插到 Map 尾端：淘汰順序＝最舊觀察
+      failures.set(key, { status: status || 0, count });
+      while (failures.size > FAILURES_MAX) failures.delete(failures.keys().next().value);
+      // 只在首次觀察到該變體失敗時記一行（action edge；重試沿用 autodrive 的 stall log）。
+      if (count === 1) {
+        log.warn(
+          'capture', 'timedtext HTTP', status || 'error', 'for', log.variant(id.lang, id.tlang),
+          '— body not usable' + (status === 429 ? ' (rate-limited by YouTube)' : ''),
+        );
+      }
+    }
+    // autodrive 查詢口：這個變體最近的壞回應（無紀錄或已成功 → null）。
+    function lastFailure(track, tlang) {
+      return failures.get(failureKey(yt.currentVideoId(), track.languageCode || '', tlang)) || null;
+    }
+
+    // 在途台帳：同變體有請求還在路上時，autodrive 不得再 setOption 選它——重選會讓
+    // 播放器 abort 在途請求重發，而 abort 只是客戶端不讀回應、伺服器端已收單計入
+    // 配額（429 限流下每個被取消的請求都白燒一次額度）。記 performance.now 時戳而
+    // 非計數：loadend 若因頁面拆除沒送達，殘影會在 INFLIGHT_TTL_MS 後自動過期，
+    // 不會把 inFlight 永久卡在 true。
+    const inflight = new Map(); // `${v}|${lang}|${tlang}` -> [startedAt, ...]
+    const INFLIGHT_TTL_MS = 30000;
+    function noteSent(url) {
+      const id = variantFromUrl(url);
+      if (!id) return;
+      const key = failureKey(id.v, id.lang, id.tlang);
+      const list = inflight.get(key) || [];
+      list.push(performance.now());
+      inflight.set(key, list);
+    }
+    function noteSettled(url) {
+      const id = variantFromUrl(url);
+      if (!id) return;
+      const key = failureKey(id.v, id.lang, id.tlang);
+      const list = inflight.get(key);
+      if (!list) return;
+      list.shift();
+      if (!list.length) inflight.delete(key);
+    }
+    function noteAborted(url) {
+      const id = variantFromUrl(url);
+      if (!id) return;
+      // 每個取消記一行帶變體標籤（action edge）：取消通常來自播放器 session 重建或
+      // 選軌更替把在途請求換掉——伺服器端照樣計入配額，對帳時要能逐筆點名。
+      log.info('capture', 'timedtext request aborted (superseded) for', log.variant(id.lang, id.tlang));
+    }
+    function inFlight(track, tlang) {
+      const list = inflight.get(failureKey(yt.currentVideoId(), track.languageCode || '', tlang));
+      if (!list) return false;
+      const cutoff = performance.now() - INFLIGHT_TTL_MS;
+      return list.some((t) => t > cutoff);
     }
 
     // Re-point the live patch behaviour to THIS resolve's functions. Runs on every factory
@@ -110,6 +184,10 @@
     impl.nativeResponse = nativeResponse;
     impl.applyTransform = applyTransform;
     impl.storeOriginal = storeOriginal;
+    impl.noteResult = noteResult;
+    impl.noteSent = noteSent;
+    impl.noteSettled = noteSettled;
+    impl.noteAborted = noteAborted;
 
     function install() {
       if (window.__YK_NET__) return;
@@ -121,14 +199,17 @@
         // asr fetch: always capture the original; serve cooked to the caller iff a
         // transform is registered. (YouTube uses XHR for timedtext in practice; this
         // path is kept symmetric for robustness.)
-        return origFetch.apply(this, args).then(async (res) => {
+        const pending = origFetch.apply(this, args);
+        impl.noteSent(url);
+        return pending.then(async (res) => {
+          impl.noteSettled(url);
           let text = '';
           try {
             text = await res.clone().text();
           } catch {
             return res;
           }
-          impl.storeOriginal(url, text);
+          impl.noteResult(url, res.status, impl.storeOriginal(url, text));
           const cooked = impl.applyTransform(url, text);
           if (cooked == null) return res;
           return new Response(cooked, {
@@ -136,6 +217,9 @@
             statusText: res.statusText,
             headers: { 'content-type': 'application/json; charset=utf-8' },
           });
+        }, (e) => {
+          impl.noteSettled(url); // 網路層 reject（abort/斷線）也要結清在途
+          throw e;
         });
       };
       const open = XMLHttpRequest.prototype.open;
@@ -147,11 +231,34 @@
       XMLHttpRequest.prototype.send = function (...args) {
         if (impl.isAsrTimedtextUrl(String(this.__ykUrl))) {
           const url = String(this.__ykUrl);
+          impl.noteSent(url);
           // Capture the ORIGINAL via the native getter (never this.responseText, which we
           // shadow next — reading it would store the COOKED body and corrupt the pool).
           this.addEventListener('load', () => {
             try {
-              impl.storeOriginal(url, impl.nativeText(this));
+              impl.noteResult(url, this.status, impl.storeOriginal(url, impl.nativeText(this)));
+            } catch {
+              /* ignore */
+            }
+          });
+          this.addEventListener('error', () => {
+            try {
+              impl.noteResult(url, 0, false); // 網路層死亡（status 0）也入台帳
+            } catch {
+              /* ignore */
+            }
+          });
+          this.addEventListener('abort', () => {
+            try {
+              impl.noteAborted(url); // 被取代／取消：只記 log，不入失敗台帳（無伺服器裁決）
+            } catch {
+              /* ignore */
+            }
+          });
+          // load / error / abort 三種結局都會走 loadend：在途台帳只在這裡結清一次。
+          this.addEventListener('loadend', () => {
+            try {
+              impl.noteSettled(url);
             } catch {
               /* ignore */
             }
@@ -258,6 +365,8 @@
       variantFromUrl,
       capturedJsonForVariant,
       hasCapturedVariant,
+      lastFailure,
+      inFlight,
       registerTransform,
       clearTransform,
       dispose: clearTransform,
