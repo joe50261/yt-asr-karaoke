@@ -15,8 +15,8 @@
   'use strict';
   window.__YK__.register(
     'engine',
-    ['config', 'log', 'settings', 'yt', 'capture', 'parse', 'styles', 'overlay', 'transcript', 'autodrive', 'native', 'panel', 'ui'],
-    (config, log, settings, yt, capture, parse, styles, overlay, transcript, autodrive, native, panel, ui) => {
+    ['config', 'log', 'settings', 'yt', 'capture', 'parse', 'styles', 'overlay', 'transcript', 'autodrive', 'native', 'panel', 'ui', 'watch'],
+    (config, log, settings, yt, capture, parse, styles, overlay, transcript, autodrive, native, panel, ui, watch) => {
       const { TOGGLE_ID, ENGAGED_CLASS } = config;
 
       let state = freshLifecycle();
@@ -140,6 +140,9 @@
           watchEnabled();
           return;
         }
+        // 播放器觀測器：每 tick 差分快照，變化瞬間記 log（成因歸因見 yk-watch）。
+        // 放在導航守門之前——導航窗口內的重置也要看得到。
+        watch.tick();
         // SPA 導航窗口守門：點連結的瞬間 pushState 已把 URL 換走，但正式 teardown 要等
         // yt-navigate-finish（新頁資料載完才發）——這幾百 ms 內 tick 仍在跑。此時不可
         // 再驅動播放器：導航中播放器會重設字幕選軌，autodrive 的 one-shot／redrive 旗標
@@ -202,7 +205,9 @@
         ensureToggle();
         panel.ensureButton(); // the ⚙ settings menu shares the toggle's lifetime/hover-reveal
         state.videoId = yt.currentVideoId();
-        log.info('engine', 'v=' + state.videoId, 'init: waiting for player response');
+        // build 隨每支影片的 init 行重印：貼出來的 log 常從導航後才開始，只有開機
+        // 那一行自報的話，中途起貼的片段就又回到無憑據狀態。
+        log.info('engine', 'v=' + state.videoId, 'init: waiting for player response', '(build ' + config.BUILD + ')');
 
         state.stage = 'player-response';
         const pr = await yt.waitForPlayerResponse(12000, () => state.active);
@@ -293,6 +298,7 @@
         // same-video 回歸（導離再導回、Karaoke OFF→ON）重新自動啟動。tick 的導航
         // 守門讓 drive 在離開後不再跑，autodrive 觀察不到「離開」，必須在此通知。
         autodrive.reset();
+        watch.reset(); // 觀測基線隨生命週期歸零：下一支影片重掛 [baseline]
         // Caption-track selection (autodrive → yt.selectAsrVariant) is player-side state:
         // teardown does not track or touch it — the one global side effect dispose leaves
         // in place (like __YK_CAP__'s persistence, yk-capture.js).

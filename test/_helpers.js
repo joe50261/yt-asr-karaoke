@@ -30,6 +30,7 @@ function makeSandbox() {
     location: { href: 'https://www.youtube.com/watch?v=abc', search: '?v=abc', pathname: '/watch', origin: 'https://www.youtube.com' },
     localStorage: (() => { const m = {}; return { getItem: (k) => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: (k) => { delete m[k]; } }; })(),
     getComputedStyle() { return { position: 'relative' }; },
+    performance: { now: () => Date.now() }, // yk-capture 的在途台帳（真頁面必有）
     console, URL, URLSearchParams, Date, Math, JSON,
     setInterval() { return 0; }, clearInterval() {}, requestAnimationFrame() { return 0; }, cancelAnimationFrame() {},
     XMLHttpRequest: function () {},
@@ -169,6 +170,7 @@ function makeDom() {
 function makeFakeXhr() {
   function FakeXHR() {
     this.readyState = 0;
+    this.status = 200; // 測試可在 __fireLoad 前覆寫（例如 429）
     this._url = '';
     this._body = '';
     this.responseType = '';
@@ -205,6 +207,13 @@ function makeFakeXhr() {
     this._body = body;
     this.readyState = 4;
     (this._listeners.load || []).forEach((fn) => fn({ target: this }));
+    // 與真 XHR 對齊：load / error / abort 之後都會補一發 loadend
+    (this._listeners.loadend || []).forEach((fn) => fn({ target: this }));
+  };
+  FakeXHR.prototype.abort = function () {
+    this.readyState = 4;
+    (this._listeners.abort || []).forEach((fn) => fn({ target: this }));
+    (this._listeners.loadend || []).forEach((fn) => fn({ target: this }));
   };
   return FakeXHR;
 }

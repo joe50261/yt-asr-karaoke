@@ -7,6 +7,10 @@
 (function () {
   'use strict';
   window.__YK__.register('config', [], () => ({
+    // 運行 build 自報（日期.當日序號）：yk-main 開機第一行與 engine 每支影片的 init 行
+    // 都會印出，console log 因此自帶「跑的是哪一版」的憑據——不再靠行號/訊息特徵反推。
+    // 規則：每次推送（任何 yk-*.js 或 manifest 變動）都必須 bump，否則自報失去意義。
+    BUILD: '2026-07-19.2',
     STYLE_ID: 'yt-karaoke-style',
     ROOT_ID: 'yt-karaoke-root',
     TOGGLE_ID: 'yt-karaoke-toggle',
@@ -42,6 +46,14 @@
     // long lines wrap via CSS — there is NO word-count cap. This gap is a fallback
     // used ONLY for captions that carry no \n line structure at all.
     LINE_BREAK_GAP_MS: 700,
+    // Pathological-line safety valve (yk-parse rule 4). Some asr bodies arrive with NO
+    // \n marks anywhere; word ends are clamped to the next word's start, so continuous
+    // speech has no >700ms gaps either — without a backstop the whole video collapses
+    // into ONE line. A grouped line whose word ONSETS span more than LINE_MAX_SPAN_MS
+    // is degenerate (real asr lines run 2–7 s; fixtures max ~2.6 s) and gets re-split
+    // at word boundaries into ~LINE_SPLIT_TARGET_MS chunks.
+    LINE_MAX_SPAN_MS: 12000,
+    LINE_SPLIT_TARGET_MS: 4000,
     // A line lights up this many ms before its first word — applied as one shared
     // lead-in so a line is active over [start - LEAD, nextStart - LEAD): contiguous,
     // never overlapping. (Overlapping windows made a click land on the previous line.)

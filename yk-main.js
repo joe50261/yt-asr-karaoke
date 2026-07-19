@@ -14,6 +14,10 @@
   'use strict';
   const di = window.__YK__;
   if (!di) throw new Error('[YT Karaoke] yk-di.js must load before yk-main.js');
+  // 開機第一行自報運行 build：Chrome 對未封裝擴充功能不會自動重載，repo 已更新
+  // ≠ 頁面注入的是新檔。這行在任何後續失敗（DI 解析、engine boot）之前就印出，
+  // 是判讀整份 console log 對應哪版原始碼的唯一憑據。
+  di.resolve('log').info('boot', 'build', di.resolve('config').BUILD);
   di.resolve('capture').install();
   di.start('engine');
 })();

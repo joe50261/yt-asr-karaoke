@@ -438,6 +438,7 @@ describe('yk-engine — tick 的 native 分支 / 導航守門 / teardown（全 m
       drive: () => calls.drives++,
       reset: () => calls.autodriveResets++,
     }));
+    di.register('watch', [], () => ({ tick() {}, markOwn() {}, reset() {} }));
     // native 的 mock：sync 把 on 拉到 nat.next（sync/reset 本體已在 native.test.js 隔離測過；
     // 這裡只驗 engine 對契約的使用：切換瞬間的 DOM 交接、isOn 分支、reset 呼叫）
     const nat = { on: false, next: true };
@@ -600,6 +601,8 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
     const pool = new Set(); // 已捕獲的變體 key（'' = 原文）
     di.register('capture', [], () => ({
       hasCapturedVariant: (_t, k) => pool.has(k), // autodrive 只問存在性（免 parse API）
+      lastFailure: () => null, // 壞回應台帳／在途台帳：本組測試走「乾淨網路」情境，
+      anyInFlight: () => false, //  節流語義由 autodrive.test.js 專測
     }));
     let vid = 'abc';
     let selTlang = null; // null = 未選任何 asr 變體
@@ -611,6 +614,19 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
       currentVideoId: () => vid,
       isAdShowing: () => ad,
       currentAsrSelection: () => (selTlang == null ? null : { tlang: selTlang }),
+      // 本套件的「掉軌」（setSel(null)）語義＝字幕整個關掉（導離再導回、使用者關字幕）：
+      // done 後對帳（reseed）對 off 一律尊重，本組測試因此聚焦 one-shot 語義本身；
+      // 「重置到手動軌」的回選語義由 autodrive.test.js 的 reseed 套件專測。
+      captionState: () => ({
+        off: selTlang == null,
+        lang: selTlang == null ? '' : 'en',
+        kind: selTlang == null ? '' : 'asr',
+        name: '',
+        tlang: selTlang || '',
+        playerState: 1,
+        t: 0,
+        ad,
+      }),
       selectAsrVariant: (_t, tl) => {
         selects.push(tl);
         if (!selectOk) return false;
@@ -618,9 +634,11 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
         return true;
       },
     }));
-    load(s, ['yk-autodrive.js']);
+    load(s, ['yk-watch.js', 'yk-autodrive.js']); // real watch（deps：上面的 log/yt mocks）
     const ad_ = di.resolve('autodrive');
     const TRACK = { languageCode: 'en' };
+    // 初始化窗守門：本 mock 的 captionState 恆為 ps=1（播放中）——首個 drive 即 latch
+    // played、gate 放行，各測項聚焦 gate 之後的驅動語義（gate 本身由 autodrive.test.js 專測）。
     return {
       ad: ad_, selects, cur, logCalls,
       drive: () => ad_.drive(TRACK, 'en'),
@@ -755,7 +773,7 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
     for (let i = 0; i < 50; i++) c.drive();
     expect(c.logCalls.length).toBe(logsAtCap); // 超限後穩態也零輸出（不洗版）
     c.ad.reset(); // teardown re-arm → 預算歸零
-    c.drive();
+    c.drive(); // ps=1 → played 立即 latch，新 one-shot 開始驅動
     expect(c.selects).toHaveLength(1 + 8 + 1); // 新 one-shot：start 相位重新可驅動
     c.drive();
     expect(c.selects).toHaveLength(1 + 8 + 1 + 1); // 且 nudge 預算真的歸零了（沒歸零這步會被擋）

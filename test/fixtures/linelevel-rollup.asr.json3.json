@@ -1,0 +1,665 @@
+{
+  "wireMagic": "pb3",
+  "pens": [ {
+
+  } ],
+  "wsWinStyles": [ {
+
+  }, {
+    "mhModeHint": 0,
+    "juJustifCode": 0,
+    "sdScrollDir": 3
+  } ],
+  "wpWinPositions": [ {
+
+  }, {
+    "apPoint": 6,
+    "ahHorPos": 20,
+    "avVerPos": 100,
+    "rcRows": 2,
+    "ccCols": 40
+  }, {
+    "apPoint": 7,
+    "ahHorPos": 50,
+    "avVerPos": 100,
+    "rcRows": 2,
+    "ccCols": 40
+  } ],
+  "events": [ {
+    "tStartMs": 0,
+    "id": 1,
+    "wpWinPosId": 2,
+    "wsWinStyleId": 1
+  }, {
+    "tStartMs": 0,
+    "dDurationMs": 7840,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "My garden is completely overrun with\nbrambles, and most people just throw"
+    } ]
+  }, {
+    "tStartMs": 4960,
+    "dDurationMs": 7520,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "them away. But, in this video, I'm going\nto see if I can turn this thorny"
+    } ]
+  }, {
+    "tStartMs": 9680,
+    "dDurationMs": 5320,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "nightmare into tea that actually taste\ngood."
+    } ]
+  }, {
+    "tStartMs": 16960,
+    "dDurationMs": 7360,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "To begin this experiment, I first\nstarted by cutting and removing all of"
+    } ]
+  }, {
+    "tStartMs": 22160,
+    "dDurationMs": 8360,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "the brambles and stuck them up into a\npile. Now, we just have to turn this"
+    } ]
+  }, {
+    "tStartMs": 27080,
+    "dDurationMs": 9040,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "into tea. I put all of my leaves into\na wooden box so they can start to wilt"
+    } ]
+  }, {
+    "tStartMs": 33600,
+    "dDurationMs": 6960,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "and release their moisture.\nNow, I'm just turning the leaves around"
+    } ]
+  }, {
+    "tStartMs": 38360,
+    "dDurationMs": 7440,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "so they wilt evenly.\nThe next day, I came back, but something"
+    } ]
+  }, {
+    "tStartMs": 43160,
+    "dDurationMs": 8320,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "had happened.\nI think we might have just discovered"
+    } ]
+  }, {
+    "tStartMs": 48080,
+    "dDurationMs": 8400,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "something. With all of my experiments, I\ndidn't get such rich aroma with wilting"
+    } ]
+  }, {
+    "tStartMs": 55280,
+    "dDurationMs": 6960,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "alone.\nAnd here I have, you know that scent"
+    } ]
+  }, {
+    "tStartMs": 59040,
+    "dDurationMs": 7800,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "when you go into a flower shop? That's\npretty much what it smells like with the"
+    } ]
+  }, {
+    "tStartMs": 64559,
+    "dDurationMs": 5601,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "added passion fruit notes. This is\namazing."
+    } ]
+  }, {
+    "tStartMs": 68080,
+    "dDurationMs": 7240,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "So, what's happening here?\nWe put a big amount of leaves into a"
+    } ]
+  }, {
+    "tStartMs": 72200,
+    "dDurationMs": 7710,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "box, and the leaves started to wilt at\nthe surface, but the bottom leaves were"
+    } ]
+  }, {
+    "tStartMs": 77880,
+    "dDurationMs": 5760,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "under a different environment.\n>> [music]"
+    } ]
+  }, {
+    "tStartMs": 80160,
+    "dDurationMs": 8240,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": ">> They had higher humidity, low oxygen,\nand pressure from the leaves above them.",
+      "isSpeakerChange": 1
+    } ]
+  }, {
+    "tStartMs": 86080,
+    "dDurationMs": 8680,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "Something about these three parameters\npermitted incredible aromas to develop."
+    } ]
+  }, {
+    "tStartMs": 91960,
+    "dDurationMs": 8560,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "When the wilting was done and the midrib\ncould bend without snapping, I put the"
+    } ]
+  }, {
+    "tStartMs": 97320,
+    "dDurationMs": 5960,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "leaves in a plastic bag and put them in\nthe freezer."
+    } ]
+  }, {
+    "tStartMs": 103840,
+    "dDurationMs": 8200,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "24 hours later, I picked the leaves out\nof the freezer and let them thaw. The"
+    } ]
+  }, {
+    "tStartMs": 109000,
+    "dDurationMs": 8080,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "reason I freeze the leaves is because it\nbreaks the cell structure of the leaves"
+    } ]
+  }, {
+    "tStartMs": 114880,
+    "dDurationMs": 6200,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "and allows for oxidation, which is\nexactly what's happening in black tea"
+    } ]
+  }, {
+    "tStartMs": 119211,
+    "dDurationMs": 6589,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "[music] making. Now, because we're\ndealing with difficult leaves, like they"
+    } ]
+  }, {
+    "tStartMs": 123840,
+    "dDurationMs": 6839,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "have thorns on them, so it's hard to\nprocess them."
+    } ]
+  }, {
+    "tStartMs": 127280,
+    "dDurationMs": 9200,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "You can find various way to bruise them\nto induce even more oxidation, like I"
+    } ]
+  }, {
+    "tStartMs": 133760,
+    "dDurationMs": 8080,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "did here. Then I put some weight on them\nand cover with a damp cloth. You have to"
+    } ]
+  }, {
+    "tStartMs": 139040,
+    "dDurationMs": 8760,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "let it sit for 6 to 8 hours for it to\nfully oxidize. Or there's a hack."
+    } ]
+  }, {
+    "tStartMs": 148040,
+    "dDurationMs": 9040,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "In the 1930s, a British tea technologist\ninvented a new method to process tea. He"
+    } ]
+  }, {
+    "tStartMs": 154240,
+    "dDurationMs": 9160,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "was seeking a simple way to mass produce\ntea, and he came up with a method called"
+    } ]
+  }, {
+    "tStartMs": 159920,
+    "dDurationMs": 10381,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "CTC, which stands for crush, tear, and\ncurl. Basically, the leaves are put into"
+    } ]
+  }, {
+    "tStartMs": 166480,
+    "dDurationMs": 10371,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "machine and kind of crushed and cut and\n[music] and torn apart at the same time,"
+    } ]
+  }, {
+    "tStartMs": 173120,
+    "dDurationMs": 6920,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "which induces a really quick and potent\n[music]"
+    } ]
+  }, {
+    "tStartMs": 177560,
+    "dDurationMs": 8720,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "oxidation. You're probably familiar with\nit because that's actually the stuff you"
+    } ]
+  }, {
+    "tStartMs": 181920,
+    "dDurationMs": 9160,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "find in regular black tea bags. Now, why\nis this technique relevant for us?"
+    } ]
+  }, {
+    "tStartMs": 189160,
+    "dDurationMs": 6160,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "Well, we can't really bruise our leaves\nby hand because of their thorns, and"
+    } ]
+  }, {
+    "tStartMs": 193400,
+    "dDurationMs": 8960,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "therefore we can't really achieve high\noxidation. But we can mimic this CTC"
+    } ]
+  }, {
+    "tStartMs": 199360,
+    "dDurationMs": 9720,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "method at home using a simple meat\ngrinder. By using this, we avoid dealing"
+    } ]
+  }, {
+    "tStartMs": 206560,
+    "dDurationMs": 7280,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "with the thorns, and we actually manage\nto highly bruise and therefore oxidize"
+    } ]
+  }, {
+    "tStartMs": 211760,
+    "dDurationMs": 7560,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "our leaves, which will give us better\nflavor transformation at the end. As you"
+    } ]
+  }, {
+    "tStartMs": 216680,
+    "dDurationMs": 8440,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "can see here, it already started to\noxidize. Our leaves turned to way"
+    } ]
+  }, {
+    "tStartMs": 221880,
+    "dDurationMs": 7680,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "darker. Here again, let it sit for 6 to\n8 hours."
+    } ]
+  }, {
+    "tStartMs": 227000,
+    "dDurationMs": 9080,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "When it's done, you could just dehydrate\nit, and it's done. But I believe we can"
+    } ]
+  }, {
+    "tStartMs": 232920,
+    "dDurationMs": 3160,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "go even further."
+    } ]
+  }, {
+    "tStartMs": 237120,
+    "dDurationMs": 8120,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "Now, I think we learned a few videos\nback when dealing with old and"
+    } ]
+  }, {
+    "tStartMs": 242000,
+    "dDurationMs": 9440,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "low-quality leaves as we have here,\nit is better to go under high processing"
+    } ]
+  }, {
+    "tStartMs": 248400,
+    "dDurationMs": 9959,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "to achieve good results at the end. So,\nwhat I did here is I created a mold, and"
+    } ]
+  }, {
+    "tStartMs": 255760,
+    "dDurationMs": 9000,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "using my two dedicated cutting boards\nfor tea making, I pressed my CTC style"
+    } ]
+  }, {
+    "tStartMs": 262360,
+    "dDurationMs": 7840,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "into kind of a brick. Then, I put this\nin the oven, and I roasted it for 20"
+    } ]
+  }, {
+    "tStartMs": 267680,
+    "dDurationMs": 5720,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "minutes at 120°\nC."
+    } ]
+  }, {
+    "tStartMs": 270960,
+    "dDurationMs": 7920,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "The idea here is to develop a roasty\nflavor on the exterior of the brick"
+    } ]
+  }, {
+    "tStartMs": 276520,
+    "dDurationMs": 7040,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "whilst preserving the more delicate\nfloral notes at the center. This way, we"
+    } ]
+  }, {
+    "tStartMs": 281560,
+    "dDurationMs": 4440,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "get [music] more complexity out of our\ntea."
+    } ]
+  }, {
+    "tStartMs": 287760,
+    "dDurationMs": 5440,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "Whole leaf\nblack berry [music] leaves."
+    } ]
+  }, {
+    "tStartMs": 300280,
+    "dDurationMs": 3960,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "Okay, so it has a pretty nice color."
+    } ]
+  }, {
+    "tStartMs": 306000,
+    "dDurationMs": 8440,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "The rest is going for the tea pets.\nNow, here's the simply dried CTC style."
+    } ]
+  }, {
+    "tStartMs": 315280,
+    "dDurationMs": 6160,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "So, yeah, the color is definitely\nstronger on this one. [music] I mean,"
+    } ]
+  }, {
+    "tStartMs": 319560,
+    "dDurationMs": 6080,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "it's the CTC style, and therefore, we\ngot much more oxidation."
+    } ]
+  }, {
+    "tStartMs": 327160,
+    "dDurationMs": 7720,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "And here's the roasted and pressed CTC\nstyle. Let's put one brick here."
+    } ]
+  }, {
+    "tStartMs": 339680,
+    "dDurationMs": 7400,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "I'm not sure if it's darker than the\nprevious one, but definitely darker"
+    } ]
+  }, {
+    "tStartMs": 343878,
+    "dDurationMs": 3202,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "[music] than the first."
+    } ]
+  }, {
+    "tStartMs": 347360,
+    "dDurationMs": 4440,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "Oh,\nwe have"
+    } ]
+  }, {
+    "tStartMs": 349640,
+    "dDurationMs": 6560,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "our whole leaves, [music] which has a\nnice color."
+    } ]
+  }, {
+    "tStartMs": 354000,
+    "dDurationMs": 8680,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "Then, the CTC\nstyle is simply dried and CTC style, but"
+    } ]
+  }, {
+    "tStartMs": 361160,
+    "dDurationMs": 4400,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "roasted.\nLet's taste them."
+    } ]
+  }, {
+    "tStartMs": 368080,
+    "dDurationMs": 5640,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "Ooh.\nSo, it's giving off light black tea"
+    } ]
+  }, {
+    "tStartMs": 372440,
+    "dDurationMs": 6240,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "vibes\nand there is a slight herbaciousness to"
+    } ]
+  }, {
+    "tStartMs": 376240,
+    "dDurationMs": 8880,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "it, but it's quite pleasant overall. I\nlike it. But, there's definitely no"
+    } ]
+  }, {
+    "tStartMs": 381760,
+    "dDurationMs": 9720,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "traces left of this interesting passion\nfruit, flowery, [music] pear, and apple"
+    } ]
+  }, {
+    "tStartMs": 387880,
+    "dDurationMs": 7640,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "notes. These all disappeared. Now, CTC\nstyle"
+    } ]
+  }, {
+    "tStartMs": 392720,
+    "dDurationMs": 2800,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "simply dried."
+    } ]
+  }, {
+    "tStartMs": 397520,
+    "dDurationMs": 5960,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "Ooh.\nSo, it's definitely more robust."
+    } ]
+  }, {
+    "tStartMs": 401120,
+    "dDurationMs": 7040,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "Taste more like black tea, but it still\nhas that little herbaciousness,"
+    } ]
+  }, {
+    "tStartMs": 406360,
+    "dDurationMs": 6520,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "which makes it a little weird in a\nsense, but"
+    } ]
+  }, {
+    "tStartMs": 410360,
+    "dDurationMs": 8080,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "it is even better, I think, in terms of\ntaste."
+    } ]
+  }, {
+    "tStartMs": 413880,
+    "dDurationMs": 7160,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "Now, CTC style half roasted.\nOoh."
+    } ]
+  }, {
+    "tStartMs": 420040,
+    "dDurationMs": 3600,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "Okay.\nThis is"
+    } ]
+  }, {
+    "tStartMs": 422240,
+    "dDurationMs": 7040,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "really good.\nIt really resembles black tea. It's"
+    } ]
+  }, {
+    "tStartMs": 427160,
+    "dDurationMs": 6560,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "really potent, like it's strong. You\ncould serve me this and if I wasn't"
+    } ]
+  }, {
+    "tStartMs": 431640,
+    "dDurationMs": 6840,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "paying attention, I would just think\nit's black tea. I think the"
+    } ]
+  }, {
+    "tStartMs": 435720,
+    "dDurationMs": 8240,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "herbaciousness kind of went away. I\nnoticed this in many batches. When you"
+    } ]
+  }, {
+    "tStartMs": 440880,
+    "dDurationMs": 9039,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "roast it or when you apply heat for a\ncertain amount of time, it kind of"
+    } ]
+  }, {
+    "tStartMs": 445960,
+    "dDurationMs": 10000,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "removes the herbal notes from the the\ntea. It's amazing we managed to get such"
+    } ]
+  }, {
+    "tStartMs": 452680,
+    "dDurationMs": 8520,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "taste from garden weeds.\nI'm I mean, I'm kind of proud, but yeah."
+    } ]
+  }, {
+    "tStartMs": 459040,
+    "dDurationMs": 5720,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "Let me know if you try it. Now, you can\napply a similar processing into other"
+    } ]
+  }, {
+    "tStartMs": 463160,
+    "dDurationMs": 5840,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "plants and if you're interested about\nthat, I recommend you to check my free"
+    } ]
+  }, {
+    "tStartMs": 466640,
+    "dDurationMs": 7960,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "mini guide. Also, I gather all of the\ninsights I make from my own experience"
+    } ]
+  }, {
+    "tStartMs": 471640,
+    "dDurationMs": 8480,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "alongside the theory from Chinese and\nRussian tea making traditions and put"
+    } ]
+  }, {
+    "tStartMs": 477920,
+    "dDurationMs": 6360,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "them all into a course. If you want to\ngo deeper into the art of making your"
+    } ]
+  }, {
+    "tStartMs": 482080,
+    "dDurationMs": 6440,
+    "wWinId": 1,
+    "segs": [ {
+      "utf8": "own tea. I hope you like this video and\nuntil the next, stay rooted."
+    } ]
+  } ]
+}

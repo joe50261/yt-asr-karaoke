@@ -90,7 +90,12 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   若播放器在等待 body 時自己把選軌重設（廣告邊界、初始化覆寫），引擎會
   觀察到漂移並**重選**（每輪驅動有限次）；若選軌還在但 body 遲遲不到
   （空/壞回應），空等約 10 秒會**重選同一變體重發請求**——驅動鏈不會
-  卡在半路。
+  卡在半路。重發按 capture 的壞回應台帳**指數退避**：同變體連續壞回應
+  （YouTube 對 `tlang=` 路徑的 **429 限流**、5xx、pot 失手的空 200）
+  每多一次，重發門檻翻倍（上限約 5 分鐘）——對已限流的端點固定間隔
+  連打只會延長封鎖。429 是伺服器端按 IP/session 記的翻譯路徑配額，
+  不帶 `tlang` 的原文 asr 不受影響；配額常在頁面載入前就已耗盡
+  （播放器自己還原字幕偏好的第一個請求就可能 429），退避後自動重試。
   一次性：換影片、換目標語言、或引擎 teardown 後回到同支影片，才會再驅動
   一輪。切回`關閉`只是**停止自動驅動**；顯示狀態屬於
   **雙語對照**自己的開關，不受影響。因為兩者正交，任何組合都成立
@@ -107,12 +112,27 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
 
 斷行規則（`yk-parse.groupLines`）：
 
-- 字幕資料自帶的 `\n` 行標記（json3 的獨立 `\n` seg）；
+- 字幕資料自帶的 `\n` 行標記——json3 的獨立 `\n` seg，或內嵌在字裡的
+  `\n`（`"word\n"`、`"\nword"` 同樣視為行標記）；
 - 說話者變更（`>>` 開頭的字）；
-- 整軌沒有任何 `\n` 標記時，改用時間間隔：前後字間隔超過
-  `LINE_BREAK_GAP_MS`（700 ms）斷行。
+- `\n` 沒有編碼**事件邊界**時，退回事件邊界斷行：每個非 `aAppend` 的
+  新事件斷行（asr 的行結構本來就落在事件上；`aAppend` 是 roll-up 續行，
+  不斷）。判定看 `\n` 是否與事件邊界共現：classic 格式的獨立 `\n` seg
+  都落在邊界上——那裡「邊界沒 `\n`」是刻意併行（翻譯軌跨事件併行是
+  YouTube 有意的），事件邊界與間隔規則都不適用；**行級 cue 格式**
+  （每事件單一 seg、`"列1\n列2"`、整軌無 `tOffsetMs` 的 roll-up 格式）
+  的 `\n` 全在事件內部、邊界無編碼，照樣逐事件斷。時間間隔仍是後盾：
+  前後字間隔超過 `LINE_BREAK_GAP_MS`（700 ms）也斷；
+- 安全閥：組出來的行若字起點跨度超過 `LINE_MAX_SPAN_MS`（12 s，正常 asr
+  行只有 2–7 s），代表上面所有結構都缺席（例如整片塞在單一事件裡），
+  強制重切。切點不盲切等距：在 `LINE_SPLIT_TARGET_MS`（4 s）目標的彈性
+  區間（2–6 s）內，選**原生 onset 間隔**（`start[i]−start[i−1]`，資料唯一
+  真實的逐字時間；逐字 end 是 clamp 出來的顯示值）最大的字界——即語音
+  真正停頓處；同值偏向 4 s 目標。
 
-行內沒有字數上限，長行由 CSS 折行。
+行內沒有字數上限，長行由 CSS 折行。曾有 asr 軌整軌不帶 `\n` 標記
+（字尾又被 clamp 到下一字起點、無間隔可斷），整片崩成一行——事件邊界
+與安全閥就是為此而設。
 
 ## 載入未封裝版（開發）
 
@@ -138,7 +158,11 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
 - `yk-di.js` —— DI 容器：`register` / `resolve` / `start` / 熱抽換。
 - `yk-config.js` —— ID、儲存鍵、時間常數、`CJK_RE`，以及跨模組契約常數
   （播放器宿主 selector 表、卡拉OK亮字金、字幕樣式 preset 值、寬度上限）——
-  同一條規則的 CSS 端與 JS 端都從這裡取值。
+  同一條規則的 CSS 端與 JS 端都從這裡取值。也持有 **`BUILD`（運行 build
+  自報）**：yk-main 開機第一行印 `boot build <BUILD>`，engine 每支影片的
+  `init` 行也重印——console log 因此自帶「跑的是哪一版」的憑據（Chrome 對
+  未封裝擴充功能不會自動重載，repo 已更新 ≠ 頁面注入的是新檔）。規則：
+  **每次推送都必須 bump `BUILD`**，貼 log 回報問題時對照這個值。
 - `yk-log.js` —— 帶標籤的 console logger；也持有**變體 log 標籤**的唯一
   定義點（`variant()`：原文 `en`、翻譯 `en→zh-Hant`）——engine 的
   binding/bound 與 yk-autodrive 的 select/drift/stall 同用，同一變體在
@@ -157,6 +181,25 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   `videoDetails.videoId` 對當前 URL 驗明正身：SPA 導航後
   `window.ytInitialPlayerResponse` 是上一次整頁載入的殭屍資料，不驗會
   綁到舊影片的軌（自動翻譯在導航後整個不啟動）。
+- `yk-watch.js` —— **播放器觀測器**：每 tick 快照字幕選軌全貌
+  （`yt.captionState`：含手動軌、手動軌翻譯、字幕關閉——
+  `currentAsrSelection` 之外的盲區）與播放器狀態，只在**變化的瞬間**
+  記 log：毫秒時戳（可與 DevTools Network 對時）、當下播放時間、廣告
+  狀態，成因標注 `[own-select]`（autodrive 的 setOption 落地；每次
+  select 後 `markOwn` 登記、落地一次即銷、~2s 歸因窗過期）／
+  `[external]`（播放器自己重置或使用者操作）／`[baseline]`（本影片
+  首次觀測）；playerState 轉移逐筆記錄（重置的對帳錨點）。YT 會在同
+  session 的不明生命週期點重置選軌（偏好 reconcile），這是抓「哪個
+  瞬間、前後發生什麼」的材料——實測（2026-07-18 log）重置落在
+  buffering→playing 轉移前 ~160ms。`anchorAge()` 把「距最近生命週期
+  錨點（baseline／playerState 轉移／廣告邊界）幾個 tick」開放給
+  yk-autodrive 的 done 後對帳：貼近錨點的外部偏離是播放器重置（可回
+  選），穩態深處的偏離是使用者動作（尊重）。engine 每 tick 呼叫
+  `tick()`（導航守門之前——導航窗口內的重置也要看得到）、teardown
+  呼叫 `reset()`。
+  穩態零輸出。resolve 時自報一行 `watch attached`——「模組有沒有載入」
+  與「播放器可不可觀測」拆成兩個可分辨的訊號：attached 有印而
+  `[baseline]` 不出，問題在 `captionState` 回 null，不是模組不在頁面裡。
 - `yk-ui.js` —— player-chrome 共用 UI 機制：藥丸鈕掛載（`mountPillButton`，
   Karaoke 開關 / ⚙ / 字幕全文三顆共用）與 pointer-capture 拖曳調寬
   （`attachDragResize`，拖出視窗放開不會掛死）。
@@ -164,7 +207,12 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   捕進池裡（經保存的原生 getter 讀取——與換給播放器的內容分屬兩條讀取
   路徑），並提供 transform 接縫（`registerTransform`/`clearTransform`，
   page-global），讓原生模式換掉**播放器**收到的 body。無 transform 時
-  ＝與被動模式位元組等同。
+  ＝與被動模式位元組等同。另記兩本 per-variant 台帳供 yk-autodrive
+  節流：**壞回應台帳**（`lastFailure`：HTTP 狀態＋連續次數，429/5xx/
+  空 200 入帳、成功入池清帳；asr-only）與**在途台帳**（`anyInFlight`：
+  send 起算、loadend 結清、30 秒 TTL 防殘影；涵蓋**所有** timedtext
+  含手動軌——捕獲與 transform 仍 asr-only）；abort（請求被選軌變更或
+  session 重建取代）逐筆記 log 帶變體標籤，方便對帳，但不入失敗台帳。
   補丁只安裝一次（`__YK_NET__`）但**不含任何邏輯**：每個決策都經 page-global
   的 `__YK_NETIMPL__` 呼叫、每次 resolve 重指，所以熱抽換這個模組真的會改變
   live hook 跑的邏輯（MCP 注入的 session 能驗證自己的修改）。
@@ -182,10 +230,31 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   播放器接受為止；沒有計時器。等待 body 期間若觀察到播放器丟掉了我們
   驅動的選擇，會**漂移重選**；若選擇還在但 body 空等過久（壞回應不入池，
   fetch 觀察不到地死了），會**卡等重踢**——重選同一變體讓播放器重發請求
-  （與切一遍同一招，計 rAF tick 不設計時器）。兩者共用每輪 one-shot
-  上限 8 次的預算，防止與使用者對戰或洗版。每個動作（選軌、相位轉移、
-  re-arm、切一遍）都記 log 並帶 `v=<影片id>`，多影片連續導航時可逐行
-  對上。engine 每 tick 呼叫 `drive()`、teardown 時呼叫 `reset()`。
+  （與切一遍同一招，計 rAF tick 不設計時器）；重踢門檻按 capture 的
+  壞回應台帳（`lastFailure`）指數退避，429 限流下不盲踢；漂移重選對
+  帳上有失敗紀錄的變體也改走退避。所有 setOption 前先過**在途守門**
+  （`capture.anyInFlight`）：本影片**任何** timedtext 請求（含手動軌
+  ——偏好還原的初始載入常是）還在路上就不選軌——播放器只有一條字幕
+  載入管線，任何選軌都會 abort 在途請求，而 abort 只是客戶端不讀
+  回應，伺服器端已計入配額，等於取消再白燒一次額度。漂移/卡等共用
+  每輪 one-shot 上限 8 次的預算，防止與使用者對戰或洗版。
+  **初始化窗守門（不與內建 race）**：播放器 init 的偏好還原不是一次
+  動作，是「到播放開始才收尾」的序列——實測它先在 buffering 中還原
+  一次（baseline），最後一手落在 buffering→playing 轉移前 ~160ms；
+  窗內 setOption 就是與內建 race，先動必被它最後一手蓋掉。時間讓路
+  （固定 ~2s）被實測否決（窗多長由播放器決定），唯一可靠的「內建已
+  出完手」訊號是**本影片首次進入播放**（ps=1、非廣告）——'start'
+  相位一律等 played 才驅動（池裡已有 body 也等：內建最後一手不看
+  池）；影片變更歸零、同影片換目標不歸零。**done 後對帳（reseed，
+  後備）**：init 收尾的重置由初始化窗守門在源頭消滅；reseed 只留給
+  播放中段的重置（廣告邊界等不明生命週期點）。done 相位每 tick 對
+  帳：選擇偏離目標且字幕仍開著時，偏離「開始」貼近生命週期錨點
+  （`watch.anchorAge`；錨可晚到，窗內逐 tick 續判）就把目標重選回
+  來；穩態深處的偏離＝使用者換軌、字幕被關＝使用者意志，一律尊重。
+  上限 3 次／one-shot，照樣過在途守門。每個動作（選軌、相位轉移、
+  re-arm、切一遍、回選）都記 log 並帶 `v=<影片id>`，多影片連續導航
+  時可逐行對上。engine 每 tick 呼叫 `drive()`、teardown 時呼叫
+  `reset()`。
 - `yk-native.js` —— **原生播放模式**，獨立的可熱抽換模組：純函數
   `cookKaraoke(entries, opts)`（解析後的行 → 卡拉OK `json3`：pop-on 視窗、
   逐字重繪事件、經 `timing.wordState` 的逐 seg pen、整數色值）、註冊到
@@ -224,7 +293,11 @@ live 模組（dependents 先）連同它自己一起 dispose，然後以新 fact
 
 - 不要求任何 host 權限；content script 只碰它被注入的 `www.youtube.com` 頁面。
 - 原生字幕只在 asr 卡拉OK實際顯示時隱藏；音訊與自動播放下一支不受影響。
-- 高亮只用字幕資料自帶的 `tOffsetMs`；自動字幕只有行級時間（無逐字
-  offset）的影片，退回逐行高亮。
+- 帶 `tOffsetMs` 的軌，高亮只用資料自帶的逐字時間。**行級軌**（整軌
+  沒有任何 `tOffsetMs`，例如 roll-up cue 格式）改為在 cue 的**語音窗**
+  （本事件 base 到下一個出字事件的 base——cue 自己的 `dDurationMs` 是
+  顯示窗、與下一 cue 重疊，不能用）內按字元權重**內插**逐字 onset：
+  拉丁按詞、CJK 逐字。內插只在整軌無 offset 時啟用，帶 offset 的軌
+  一個位元組都不動。
 - 改寫自專案的 `karaoke.js`，加上早期 hook 安裝、SPA 生命週期處理、
   翻譯/雙語綁定與頁內設定選單。
