@@ -236,21 +236,25 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   （`capture.anyInFlight`）：本影片**任何** timedtext 請求（含手動軌
   ——偏好還原的初始載入常是）還在路上就不選軌——播放器只有一條字幕
   載入管線，任何選軌都會 abort 在途請求，而 abort 只是客戶端不讀
-  回應，伺服器端已計入配額，等於取消再白燒一次額度。新影片另有
-  **讓路期**（~2 秒）：bind 當下不搶 setOption，先讓播放器 init 自己
-  的偏好還原出手（有 body 落池即提前結束；同影片換目標語言不適用），
-  避免在錯誤時機與內建功能 race。兩者共用每輪 one-shot 上限 8 次的
-  預算，防止與使用者對戰或洗版。**done 後對帳（reseed）**：done 不是
-  終點——實測播放器會在 done 後（如 buffering→playing 轉移）自己把
-  選軌重置回「手動軌＋記住的翻譯」，one-shot latch 不動的話 engine
-  只能 stepAside、失敗被 done/bound 的成功 log 蓋住。done 相位因此
-  每 tick 繼續對帳：選擇偏離目標且字幕仍開著時，偏離「開始」貼近
-  生命週期錨點（`watch.anchorAge`；錨可晚到，窗內逐 tick 續判）就把
-  目標重選回來；穩態深處的偏離＝使用者換軌、字幕被關＝使用者意志，
-  一律尊重。上限 3 次／one-shot，照樣過在途守門。每個動作（選軌、
-  相位轉移、re-arm、切一遍、回選）都記 log 並帶 `v=<影片id>`，多影片
-  連續導航時可逐行對上。engine 每 tick 呼叫 `drive()`、teardown 時
-  呼叫 `reset()`。
+  回應，伺服器端已計入配額，等於取消再白燒一次額度。漂移/卡等共用
+  每輪 one-shot 上限 8 次的預算，防止與使用者對戰或洗版。
+  **初始化窗守門（不與內建 race）**：播放器 init 的偏好還原不是一次
+  動作，是「到播放開始才收尾」的序列——實測它先在 buffering 中還原
+  一次（baseline），最後一手落在 buffering→playing 轉移前 ~160ms；
+  窗內 setOption 就是與內建 race，先動必被它最後一手蓋掉。時間讓路
+  （固定 ~2s）被實測否決（窗多長由播放器決定），唯一可靠的「內建已
+  出完手」訊號是**本影片首次進入播放**（ps=1、非廣告）——'start'
+  相位一律等 played 才驅動（池裡已有 body 也等：內建最後一手不看
+  池）；影片變更歸零、同影片換目標不歸零。**done 後對帳（reseed，
+  後備）**：init 收尾的重置由初始化窗守門在源頭消滅；reseed 只留給
+  播放中段的重置（廣告邊界等不明生命週期點）。done 相位每 tick 對
+  帳：選擇偏離目標且字幕仍開著時，偏離「開始」貼近生命週期錨點
+  （`watch.anchorAge`；錨可晚到，窗內逐 tick 續判）就把目標重選回
+  來；穩態深處的偏離＝使用者換軌、字幕被關＝使用者意志，一律尊重。
+  上限 3 次／one-shot，照樣過在途守門。每個動作（選軌、相位轉移、
+  re-arm、切一遍、回選）都記 log 並帶 `v=<影片id>`，多影片連續導航
+  時可逐行對上。engine 每 tick 呼叫 `drive()`、teardown 時呼叫
+  `reset()`。
 - `yk-native.js` —— **原生播放模式**，獨立的可熱抽換模組：純函數
   `cookKaraoke(entries, opts)`（解析後的行 → 卡拉OK `json3`：pop-on 視窗、
   逐字重繪事件、經 `timing.wordState` 的逐 seg pen、整數色值）、註冊到

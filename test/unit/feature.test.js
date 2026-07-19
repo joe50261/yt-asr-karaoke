@@ -637,11 +637,8 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
     load(s, ['yk-watch.js', 'yk-autodrive.js']); // real watch（deps：上面的 log/yt mocks）
     const ad_ = di.resolve('autodrive');
     const TRACK = { languageCode: 'en' };
-    // 讓路期（START_GRACE_TICKS=120）：新影片 bind 後 autodrive 先讓播放器自己的初始
-    // 字幕載入出手，池空時期滿才驅動。本套測項聚焦期滿後的驅動語義：setup 先空轉到
-    // 只剩最後一 tick（119 次，無 select、'armed' 一行之外零輸出），各測項的第一個
-    // drive() 即期滿開始驅動——與引入讓路期前的行為逐 tick 對齊。
-    for (let i = 0; i < 119; i++) ad_.drive(TRACK, 'en');
+    // 初始化窗守門：本 mock 的 captionState 恆為 ps=1（播放中）——首個 drive 即 latch
+    // played、gate 放行，各測項聚焦 gate 之後的驅動語義（gate 本身由 autodrive.test.js 專測）。
     return {
       ad: ad_, selects, cur, logCalls,
       drive: () => ad_.drive(TRACK, 'en'),
@@ -776,8 +773,7 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
     for (let i = 0; i < 50; i++) c.drive();
     expect(c.logCalls.length).toBe(logsAtCap); // 超限後穩態也零輸出（不洗版）
     c.ad.reset(); // teardown re-arm → 預算歸零
-    for (let i = 0; i < 119; i++) c.drive(); // 新 one-shot 的讓路期先空轉（池空、無 select）
-    c.drive();
+    c.drive(); // ps=1 → played 立即 latch，新 one-shot 開始驅動
     expect(c.selects).toHaveLength(1 + 8 + 1); // 新 one-shot：start 相位重新可驅動
     c.drive();
     expect(c.selects).toHaveLength(1 + 8 + 1 + 1); // 且 nudge 預算真的歸零了（沒歸零這步會被擋）

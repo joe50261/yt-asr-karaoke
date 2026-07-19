@@ -36,16 +36,25 @@
  * 不構成對戰使用者）。計的是 rAF tick 數不是牆鐘（本模組不設計時器），額度與 nudge
  * 共用 MAX_NUDGES。
  *
- * done 後對帳（reseed）：done 不是終點——實測（yk-watch 2026-07-18 log）播放器在
- * done 後 ~1.1s、buffering→playing 轉移前 ~160ms 自己把選軌重置回「手動軌＋記住的
- * 翻譯」；one-shot latch 在 done 上不動，engine 因 currentAsrSelection 回 null 而
- * stepAside，失敗被 done/bound 的成功 log 蓋住。所以 done 相位每 tick 繼續對帳：
- * 選擇偏離目標且字幕仍開著時，若偏離「開始」貼近生命週期錨點（watch.anchorAge：
- * baseline／playerState 轉移／廣告邊界；或 done 剛落地）就把目標重選回來——貼近
- * 錨點的偏離是播放器重置，穩態深處的偏離是使用者換軌（尊重，不對戰）。錨可晚到
- * （重置早於 ps 轉移），窗內逐 tick 續判補得到。字幕被關一律尊重（使用者意志的
- * 明確訊號）。上限 MAX_RESEEDS/one-shot；照樣過在途守門（重置常自帶它的 timedtext
- * fetch，等它落地，不取消）。
+ * 初始化窗守門（不與內建 race）：播放器 init 的偏好還原不是一次動作，是一段
+ * 「到播放開始才收尾」的序列——實測（yk-watch 2026-07-18 log）它在 baseline
+ * （buffering、ct=0）先還原一次，最後一手落在 buffering→playing 轉移前 ~160ms。
+ * 在這段窗內 setOption 就是與內建 race：先動的必被它最後一手蓋掉（done 後 ~1.1s
+ * 被重置回手動軌的整起事故），engine 因 currentAsrSelection 回 null 而 stepAside，
+ * 失敗還被 done/bound 的成功 log 蓋住。時間讓路（固定 ~2s）被實測否決：窗多長由
+ * 播放器決定，唯一可靠的「內建已出完手」訊號是**本影片首次進入播放**
+ * （playerState=1、非廣告）。所以 'start' 相位一律等 played 才驅動——偵測內建的
+ * 窗、排在它後面，而不是搶先然後補救。自動播放關閉時 = 使用者按播放才驅動
+ * （播放前本來就沒有卡拉OK可看）。
+ *
+ * done 後對帳（reseed，後備）：初始化窗守門把「init 收尾重置」整類消滅在源頭；
+ * reseed 只留給播放中段的重置（廣告邊界等不明生命週期點）。done 相位每 tick
+ * 對帳：選擇偏離目標且字幕仍開著時，若偏離「開始」貼近生命週期錨點
+ * （watch.anchorAge：baseline／playerState 轉移／廣告邊界；或 done 剛落地）就把
+ * 目標重選回來——貼近錨點的偏離是播放器重置，穩態深處的偏離是使用者換軌
+ * （尊重，不對戰）。錨可晚到（實測重置早於 ps 轉移），窗內逐 tick 續判補得到。
+ * 字幕被關一律尊重（使用者意志的明確訊號）。上限 MAX_RESEEDS/one-shot；照樣過
+ * 在途守門（重置常自帶它的 timedtext fetch，等它落地，不取消）。
  *
  * Log 紀律：只在「動作邊緣」記（每次 select、步驟推進、re-arm、redrive 執行），每行
  * 帶 v=<影片id>——drive() 每 tick 都跑，穩態必須零輸出。變體一律用 log.variant 的
@@ -56,7 +65,6 @@
   window.__YK__.register('autodrive', ['log', 'settings', 'yt', 'capture', 'watch'], (log, settings, yt, capture, watch) => {
     const MAX_NUDGES = 8; // 漂移重選＋卡等重踢的共用上限（per one-shot；re-arm/reset 歸零）
     const STALL_TICKS = 600; // on-variant 空等幾個 rAF tick 判定 fetch 已死（60fps ≈ 10s）
-    const START_GRACE_TICKS = 120; // 新影片先讓路 ~2s：播放器 init 自己會還原字幕偏好
     const RESEED_WINDOW_TICKS = 300; // done 後偏離的錨點歸因窗（~5s）：偏離開始點與錨點的最大距離
     const MAX_RESEEDS = 3; // done 後重置回選上限（per one-shot）：錨點誤判時也不與使用者無限對戰
     let phase = 'start'; // start → orig → trans → done (one-shot per video / per target)
@@ -64,7 +72,7 @@
     let lastTarget = ''; // last autoDualLang we acted on
     let nudges = 0; // 本輪 one-shot 已用掉的重選次數（漂移＋卡等共用）
     let stall = 0; // 連續「在變體上但 body 未到」的 tick 數（任何 select/轉移歸零）
-    let grace = 0; // 讓路期已數的 tick（影片變更歸零；目標變更不適用，直接視為期滿）
+    let played = false; // 本影片是否已進入播放（ps=1、非廣告）＝內建 init 已出完手；影片變更歸零
     let redriveWanted = false; // 「切一遍」旗標：下一個可行 tick 重選當前變體一次
     let ticks = 0; // 本輪 one-shot 的 drive tick 計數（reseed 的時間軸；re-arm 歸零）
     let doneTick = -1; // done 落地的 tick（done 剛落地也是 reseed 的錨點之一）
@@ -153,13 +161,12 @@
       // 知道狀態機才看得懂。
       switch (phase) {
         case 'start':
-          // 讓路期：bind 當下就 setOption 是與內建功能 race 的錯誤時機——播放器 init
-          // 自己會還原字幕偏好（發 timedtext，可能是手動軌），我們搶先選軌會 abort 它
-          // 的在途請求（配額白燒），或被它隨後蓋回來（漂移→nudge 再燒一次）。新影片
-          // 先等 START_GRACE_TICKS 讓它出手：期間有請求在途由 anyInFlight 守門等落地；
-          // 池裡已有任一 body＝它已走完，立即開始。目標語言變更（同影片、使用者動作
-          // 當下）沒有這個 race，不等。
-          if (!haveOrig && !haveTrans && ++grace < START_GRACE_TICKS) break;
+          // 初始化窗守門（見頭註）：播放器 init 的偏好還原到「本影片首次進入播放」
+          // 才收尾（實測最後一手落在 buffering→playing 轉移前 ~160ms）；窗內任何
+          // setOption 都是與內建 race——先動必被它最後一手蓋掉，還會 abort 它的在途
+          // 請求白燒配額。等 played（drive 每 tick 觀測）才開始驅動；池裡已有 body
+          // 也一樣等——內建的最後一手不看池，照樣蓋。
+          if (!played) break;
           // 'start' always drives toward the target (even if both bodies are already
           // captured) so a 關閉→on after the player drifted re-selects the translation.
           // 在途守門（與 nudge/stallRekick 同則）：想要的變體已有請求在路上（例如播放器
@@ -272,9 +279,9 @@
       // the latter covers switching A→B directly, and 關閉 (target='') which then no-ops
       // below. Without this, 'done' would latch and a new target would never drive.
       if (cur !== vid || target !== lastTarget) {
-        // 讓路期只給影片變更（新頁面的播放器 init 才有偏好還原 race）；同影片換目標
-        // 是使用者當下的動作，直接視為期滿。
-        grace = cur !== vid ? 0 : START_GRACE_TICKS;
+        // 初始化窗只屬於影片變更（新頁面的播放器 init 才有偏好還原序列要等）；
+        // 同影片換目標是使用者當下的動作，played 不歸零、gate 已過就直接驅動。
+        if (cur !== vid) played = false;
         vid = cur;
         lastTarget = target;
         phase = 'start';
@@ -288,6 +295,15 @@
         if (target) log.info('autodrive', 'v=' + vid, 'armed: will drive to', log.variant(trackLang, target));
       }
       ticks++;
+      // 初始化窗觀測：本影片首次「播放中且非廣告」＝內建 init 的偏好還原已出完手
+      // （它的最後一手在進入播放之前）。latch 住，此後暫停/緩衝不再重新擋路。
+      if (!played) {
+        const cs = yt.captionState();
+        if (cs && cs.playerState === 1 && !cs.ad) {
+          played = true;
+          if (target && phase === 'start') log.info('autodrive', 'v=' + vid, 'player init settled (playing) — start driving');
+        }
+      }
       autoStart(track, trackLang, target);
       reconcile(track, trackLang, target);
       serveRedrive(track, trackLang);
@@ -299,7 +315,7 @@
       lastTarget = '';
       nudges = 0;
       stall = 0;
-      grace = 0;
+      played = false;
       redriveWanted = false;
       ticks = 0;
       doneTick = -1;

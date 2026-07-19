@@ -78,7 +78,7 @@ describe('yk-autodrive — stall 重踢按壞回應台帳指數退避（mock 注
     load(s, ['yk-di.js']);
     const di = s.window.__YK__;
     const selects = [];
-    const state = { anyInFlight: opts.anyInFlight || (() => false) };
+    const state = { anyInFlight: opts.anyInFlight || (() => false), ps: opts.playerState ?? 1 };
     const hasCaptured = opts.hasCaptured || ((_t, tlang) => tlang === '');
     di.register('log', [], () => ({ info() {}, warn() {}, error() {}, variant: (l, t) => (t ? l + '→' + t : l) }));
     di.register('settings', [], () => ({ current: { autoDualLang: 'zh-Hans' } }));
@@ -87,6 +87,8 @@ describe('yk-autodrive — stall 重踢按壞回應台帳指數退避（mock 注
       isAdShowing: () => false,
       // 永遠停在目標變體上、body 永不到（429 情境）；select 都被接受
       currentAsrSelection: () => ({ tlang: 'zh-Hans' }),
+      // 預設已在播放（ps=1）：初始化窗守門（played gate）放行，本組聚焦節流語義
+      captionState: () => ({ off: false, lang: 'en', kind: 'asr', name: '', tlang: 'zh-Hans', playerState: state.ps, t: 0, ad: false }),
       selectAsrVariant: (_t, tlang) => (selects.push(tlang), true),
     }));
     di.register('capture', [], () => ({
@@ -131,19 +133,32 @@ describe('yk-autodrive — stall 重踢按壞回應台帳指數退避（mock 注
     expect(selects).toEqual(['zh-Hans']);
   });
 
-  test('讓路期：新影片 bind 後 ~2s（120 tick）不驅動，讓播放器內建的初始載入先出手', () => {
-    const { drive, selects } = setup(null, { hasCaptured: () => false }); // 池全空：讓路期生效
-    for (let t = 1; t < 120; t++) drive(track, 'en');
-    expect(selects).toHaveLength(0); // 期內：零 setOption，內建功能先走
-    drive(track, 'en'); // 第 120 tick 期滿、仍無任何動靜 → 才開始驅動
+  test('初始化窗守門：播放器進入播放（ps=1）前不驅動——內建偏好還原到播放開始前才收尾，先動必 race', () => {
+    // 實測（2026-07-18 log）：固定 ~2s 時間讓路在 buffering 中就期滿開驅動，內建 init
+    // 的最後一手（偏好還原）在 buffering→playing 轉移前 ~160ms 才落，把我們蓋掉。
+    // 唯一可靠的「內建已出完手」訊號是本影片首次進入播放。
+    const { drive, selects, state } = setup(null, { hasCaptured: () => false, playerState: 3 });
+    for (let t = 0; t < 500; t++) drive(track, 'en'); // buffering 多久都不動（窗多長由播放器決定）
+    expect(selects).toHaveLength(0);
+    state.ps = 1; // 播放開始＝內建 init 已收尾
+    drive(track, 'en');
     expect(selects).toEqual(['']);
+  });
+
+  test('初始化窗守門：池裡已有 body 也一樣等播放——內建的最後一手不看池，照樣蓋', () => {
+    const { drive, selects, state } = setup(null, { playerState: 3 }); // 原文已入池（跨導航快取）
+    for (let t = 0; t < 300; t++) drive(track, 'en');
+    expect(selects).toHaveLength(0);
+    state.ps = 1;
+    drive(track, 'en');
+    expect(selects).toEqual(['zh-Hans']); // 原文在池：播放後直接切目標
   });
 });
 
-describe('yk-autodrive — done 後對帳（reseed）：播放器重置回選、使用者換軌尊重', () => {
-  // 實測（2026-07-18 log）：done 後 ~1.1s 播放器自己把選軌重置回「手動軌＋記住的
-  // 翻譯」，重置早於 buffering→playing 轉移 ~160ms；one-shot latch 不動、engine
-  // stepAside，失敗被 done/bound 蓋住。本套件驗證 reconcile 的錨點歸因。
+describe('yk-autodrive — done 後對帳（reseed，後備）：播放中段重置回選、使用者換軌尊重', () => {
+  // init 收尾的重置由初始化窗守門在源頭消滅（不 race）；reseed 只留給播放中段的
+  // 重置（廣告邊界等不明生命週期點）：偏離開始貼近生命週期錨點→回選，穩態偏離
+  // ＝使用者換軌→尊重。本套件驗證 reconcile 的錨點歸因。
   const WINDOW = 300; // 與 yk-autodrive 的 RESEED_WINDOW_TICKS 同步（~5s）
 
   function setup() {
@@ -155,7 +170,8 @@ describe('yk-autodrive — done 後對帳（reseed）：播放器重置回選、
     // st.sel = currentAsrSelection 的回值；st.cs = captionState 快照（watch 與 reconcile 共用）
     const st = {
       sel: { tlang: 'zh-Hans' }, // 初始即在目標上：start 相位直接收 done，不發 select
-      cs: { off: false, lang: 'en', kind: 'asr', name: '', tlang: 'zh-Hans', playerState: 3, t: 0, ad: false },
+      // ps=1（播放中）：初始化窗守門已過——reseed 只管播放中段的重置
+      cs: { off: false, lang: 'en', kind: 'asr', name: '', tlang: 'zh-Hans', playerState: 1, t: 0, ad: false },
     };
     di.register('log', [], () => ({
       info() {},
@@ -198,20 +214,22 @@ describe('yk-autodrive — done 後對帳（reseed）：播放器重置回選、
   }
   const track = { languageCode: 'en' };
 
-  test('實測序列：穩態深處重置、ps 轉移晚 ~10 tick 才來 → 晚到的錨照樣把偏離標成重置並回選', () => {
+  test('播放中段重置、ps 轉移晚 ~10 tick 才來 → 晚到的錨照樣把偏離標成重置並回選', () => {
+    // 錨可晚到：實測 init 收尾的重置早於 ps 轉移 ~160ms——中段重置（廣告邊界等）
+    // 同樣可能先重置後轉移，窗內逐 tick 續判補得到。
     const { tick, st, selects, warns, playerReset } = setup();
-    for (let i = 0; i < WINDOW + 100; i++) tick(); // 走出 baseline 錨的窗，進穩態
+    for (let i = 0; i < WINDOW + 100; i++) tick(); // 走出 baseline/done 錨的窗，進穩態
     expect(selects).toHaveLength(0); // done 一路安靜
     playerReset();
     for (let i = 0; i < 10; i++) tick(); // 錨未到：先不動（區分不了使用者換軌）
     expect(selects).toHaveLength(0);
-    st.cs = { ...st.cs, playerState: 1 }; // buffering→playing：錨到了
+    st.cs = { ...st.cs, playerState: 3 }; // playing→buffering：錨到了
     tick();
     expect(selects).toEqual(['zh-Hans']); // 同 tick 回選目標
     expect(warns.some((l) => l.includes('reseed') && l.includes('manual en→zh-Hans "Default"'))).toBe(true);
   });
 
-  test('done 剛落地即被重置（實測 +1.1s 案例）：baseline/done 錨在窗內 → 立即回選', () => {
+  test('done 剛落地即被重置：done 錨在窗內 → 立即回選', () => {
     const { tick, selects, playerReset } = setup();
     for (let i = 0; i < 66; i++) tick(); // done 後 ~1.1s
     playerReset();
@@ -233,8 +251,7 @@ describe('yk-autodrive — done 後對帳（reseed）：播放器重置回選、
     const { tick, st, selects } = setup();
     for (let i = 0; i < 10; i++) tick();
     st.sel = null;
-    st.cs = { ...st.cs, off: true, lang: '', kind: '', tlang: '' };
-    st.cs.playerState = 1; // 錨與關字幕同時發生也一樣
+    st.cs = { ...st.cs, off: true, lang: '', kind: '', tlang: '', playerState: 3 }; // 錨與關字幕同時發生也一樣
     for (let i = 0; i < 20; i++) tick();
     expect(selects).toHaveLength(0);
   });
