@@ -614,6 +614,19 @@ describe('yk-autodrive — 唯一選軌 driver：one-shot 自動啟動 + redrive
       currentVideoId: () => vid,
       isAdShowing: () => ad,
       currentAsrSelection: () => (selTlang == null ? null : { tlang: selTlang }),
+      // 本套件的「掉軌」（setSel(null)）語義＝字幕整個關掉（導離再導回、使用者關字幕）：
+      // done 後對帳（reseed）對 off 一律尊重，本組測試因此聚焦 one-shot 語義本身；
+      // 「重置到手動軌」的回選語義由 autodrive.test.js 的 reseed 套件專測。
+      captionState: () => ({
+        off: selTlang == null,
+        lang: selTlang == null ? '' : 'en',
+        kind: selTlang == null ? '' : 'asr',
+        name: '',
+        tlang: selTlang || '',
+        playerState: 1,
+        t: 0,
+        ad,
+      }),
       selectAsrVariant: (_t, tl) => {
         selects.push(tl);
         if (!selectOk) return false;

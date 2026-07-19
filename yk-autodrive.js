@@ -36,6 +36,17 @@
  * 不構成對戰使用者）。計的是 rAF tick 數不是牆鐘（本模組不設計時器），額度與 nudge
  * 共用 MAX_NUDGES。
  *
+ * done 後對帳（reseed）：done 不是終點——實測（yk-watch 2026-07-18 log）播放器在
+ * done 後 ~1.1s、buffering→playing 轉移前 ~160ms 自己把選軌重置回「手動軌＋記住的
+ * 翻譯」；one-shot latch 在 done 上不動，engine 因 currentAsrSelection 回 null 而
+ * stepAside，失敗被 done/bound 的成功 log 蓋住。所以 done 相位每 tick 繼續對帳：
+ * 選擇偏離目標且字幕仍開著時，若偏離「開始」貼近生命週期錨點（watch.anchorAge：
+ * baseline／playerState 轉移／廣告邊界；或 done 剛落地）就把目標重選回來——貼近
+ * 錨點的偏離是播放器重置，穩態深處的偏離是使用者換軌（尊重，不對戰）。錨可晚到
+ * （重置早於 ps 轉移），窗內逐 tick 續判補得到。字幕被關一律尊重（使用者意志的
+ * 明確訊號）。上限 MAX_RESEEDS/one-shot；照樣過在途守門（重置常自帶它的 timedtext
+ * fetch，等它落地，不取消）。
+ *
  * Log 紀律：只在「動作邊緣」記（每次 select、步驟推進、re-arm、redrive 執行），每行
  * 帶 v=<影片id>——drive() 每 tick 都跑，穩態必須零輸出。變體一律用 log.variant 的
  * 統一標籤（原文 'en'、翻譯 'en→zh-Hant'）；內部相位名（orig/trans）不出現在 log。
@@ -46,6 +57,8 @@
     const MAX_NUDGES = 8; // 漂移重選＋卡等重踢的共用上限（per one-shot；re-arm/reset 歸零）
     const STALL_TICKS = 600; // on-variant 空等幾個 rAF tick 判定 fetch 已死（60fps ≈ 10s）
     const START_GRACE_TICKS = 120; // 新影片先讓路 ~2s：播放器 init 自己會還原字幕偏好
+    const RESEED_WINDOW_TICKS = 300; // done 後偏離的錨點歸因窗（~5s）：偏離開始點與錨點的最大距離
+    const MAX_RESEEDS = 3; // done 後重置回選上限（per one-shot）：錨點誤判時也不與使用者無限對戰
     let phase = 'start'; // start → orig → trans → done (one-shot per video / per target)
     let vid = ''; // current video id
     let lastTarget = ''; // last autoDualLang we acted on
@@ -53,6 +66,11 @@
     let stall = 0; // 連續「在變體上但 body 未到」的 tick 數（任何 select/轉移歸零）
     let grace = 0; // 讓路期已數的 tick（影片變更歸零；目標變更不適用，直接視為期滿）
     let redriveWanted = false; // 「切一遍」旗標：下一個可行 tick 重選當前變體一次
+    let ticks = 0; // 本輪 one-shot 的 drive tick 計數（reseed 的時間軸；re-arm 歸零）
+    let doneTick = -1; // done 落地的 tick（done 剛落地也是 reseed 的錨點之一）
+    let reseeds = 0; // done 後已回選次數
+    let devStart = -1; // 當前偏離的開始 tick（-1 = 未偏離／已回到目標）
+    let devAnchored = false; // 這次偏離的開始是否貼近錨點（判定一次偏離、latch 到偏離結束）
 
     function redrive() {
       redriveWanted = true;
@@ -156,6 +174,7 @@
             }
           } else if (onTarget && haveTrans) {
             phase = 'done'; // already there (player on target, both loaded)
+            doneTick = ticks;
             log.info('autodrive', 'v=' + vid, 'done: already on', log.variant(trackLang, target), 'with both bodies');
           } else if (!capture.anyInFlight() && yt.selectAsrVariant(track, target)) {
             watch.markOwn(track, target);
@@ -185,6 +204,7 @@
         case 'trans': // waiting for the translation's body AND the player holding the target
           if (haveTrans && onTarget) {
             phase = 'done';
+            doneTick = ticks;
             stall = 0;
             log.info('autodrive', 'v=' + vid, 'done:', log.variant(trackLang, target), 'captured and selected');
           } else if (!onTarget) {
@@ -195,6 +215,52 @@
             stallRekick(track, trackLang, target); // 人在目標上、body 遲遲不到 → fetch 可能已死
           }
           break;
+      }
+    }
+
+    // done 後對帳（見頭註）：偏離目標＋字幕仍開＋偏離開始貼近生命週期錨點 → 回選目標。
+    function reconcile(track, trackLang, target) {
+      if (phase !== 'done' || !target || !track || yt.isAdShowing()) return;
+      const sel = yt.currentAsrSelection(trackLang);
+      if (sel && sel.tlang === target) {
+        devStart = -1; // 在目標上：本次偏離（若有）結束，歸因狀態清空
+        devAnchored = false;
+        return;
+      }
+      const cs = yt.captionState();
+      if (!cs || cs.off) {
+        devStart = -1; // 觀測不到／字幕被關＝使用者意志的明確訊號：尊重，不視為偏離
+        devAnchored = false;
+        return;
+      }
+      if (devStart < 0) {
+        devStart = ticks;
+        devAnchored = false;
+      }
+      // 錨點歸因：偏離開始點落在任一錨（watch 的 baseline/ps 轉移/廣告邊界、或 done
+      // 剛落地）的 ±窗內。錨常晚到（實測重置早於 ps 轉移 ~160ms）——窗未過期前
+      // 逐 tick 續判，晚到的錨照樣把這次偏離標成「播放器重置」。
+      if (!devAnchored && ticks - devStart <= RESEED_WINDOW_TICKS) {
+        devAnchored =
+          watch.anchorAge() <= RESEED_WINDOW_TICKS ||
+          (doneTick >= 0 && devStart - doneTick <= RESEED_WINDOW_TICKS);
+      }
+      if (!devAnchored || reseeds >= MAX_RESEEDS) return; // 穩態偏離（使用者換軌）或額度用罄：不對戰
+      if (capture.anyInFlight()) return; // 在途守門：重置常自帶它的 timedtext fetch，等落地
+      if (!yt.selectAsrVariant(track, target)) return; // player 未 ready：下 tick 再試
+      watch.markOwn(track, target);
+      reseeds++;
+      devStart = -1;
+      devAnchored = false;
+      log.warn(
+        'autodrive', 'v=' + vid,
+        'reseed: player reset selection to',
+        (cs.kind === 'asr' ? 'asr ' : 'manual ') + log.variant(cs.lang, cs.tlang) + (cs.name ? ' "' + cs.name + '"' : ''),
+        '— re-selected', log.variant(trackLang, target),
+        '(' + reseeds + '/' + MAX_RESEEDS + ')',
+      );
+      if (reseeds === MAX_RESEEDS) {
+        log.warn('autodrive', 'v=' + vid, 'reseed budget exhausted — further external changes are respected');
       }
     }
 
@@ -214,9 +280,16 @@
         phase = 'start';
         nudges = 0;
         stall = 0;
+        ticks = 0;
+        doneTick = -1;
+        reseeds = 0;
+        devStart = -1;
+        devAnchored = false;
         if (target) log.info('autodrive', 'v=' + vid, 'armed: will drive to', log.variant(trackLang, target));
       }
+      ticks++;
       autoStart(track, trackLang, target);
+      reconcile(track, trackLang, target);
       serveRedrive(track, trackLang);
     }
 
@@ -228,6 +301,11 @@
       stall = 0;
       grace = 0;
       redriveWanted = false;
+      ticks = 0;
+      doneTick = -1;
+      reseeds = 0;
+      devStart = -1;
+      devAnchored = false;
     }
 
     return {

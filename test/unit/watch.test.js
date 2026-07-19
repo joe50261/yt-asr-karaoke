@@ -104,4 +104,24 @@ describe('yk-watch — 逐 tick 差分觀測（mock 注入 log/yt）', () => {
     for (let i = 0; i < 10; i++) watch.tick();
     expect(lines).toHaveLength(0);
   });
+
+  test('anchorAge：baseline／playerState 轉移／廣告邊界都是錨點，穩態逐 tick 遞增', () => {
+    const { watch, st, lines } = setup();
+    expect(watch.anchorAge()).toBe(Infinity); // 尚無任何觀測
+    watch.tick(); // baseline
+    expect(watch.anchorAge()).toBe(0);
+    for (let i = 0; i < 10; i++) watch.tick();
+    expect(watch.anchorAge()).toBe(10);
+    st.state = { ...st.state, playerState: 2 };
+    watch.tick(); // ps 轉移＝新錨
+    expect(watch.anchorAge()).toBe(0);
+    for (let i = 0; i < 5; i++) watch.tick();
+    const before = lines.length;
+    st.state = { ...st.state, ad: true };
+    watch.tick(); // 廣告邊界＝新錨；不另記 log（幾乎必伴隨 ps 轉移）
+    expect(watch.anchorAge()).toBe(0);
+    expect(lines.length).toBe(before);
+    watch.reset();
+    expect(watch.anchorAge()).toBe(Infinity); // teardown 歸零
+  });
 });

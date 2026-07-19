@@ -9,6 +9,10 @@
  * 動機：YT 會在同 session 內的不明生命週期點重置字幕選軌（例如把選擇拉回
  * 手動軌＋記住的翻譯語言），從外部只能靠逐瞬間觀測抓到「是哪個瞬間、前後
  * 發生了什麼」（playerState 轉移、廣告邊界、時間跳動），才有材料設計判別。
+ * 實測（2026-07-18 log）：重置落在 buffering→playing 轉移前 ~160ms——生命週期
+ * 錨點（baseline／playerState 轉移／廣告邊界）與重置緊鄰。anchorAge() 把「距離
+ * 最近錨點幾個 tick」開放給 autodrive 的 done 後對帳（reseed）：貼近錨點的外部
+ * 偏離是播放器重置、可回選；穩態中的偏離是使用者動作、必須尊重。
  * 穩態零輸出（log 紀律）；engine 每 tick 呼叫 tick()、teardown 呼叫 reset()。
  */
 (function () {
@@ -18,7 +22,10 @@
     let vid = null; // 觀測中的影片（換片重掛基線）
     let lastSig; // undefined = 尚無基線
     let lastPs; // 上次播放器狀態
+    let lastAd; // 上次廣告狀態（邊界＝生命週期錨點；不另記 log——幾乎必伴隨 ps 轉移）
     let own = null; // { lang, tlang, ttl }：autodrive 剛發出的選擇
+    let tickN = 0; // 已觀測的 tick 數（captionState 回 null 不計）
+    let anchorTick = -1; // 最近一次生命週期錨點（baseline／ps 轉移／廣告邊界）的 tick
 
     const now = () => 't=+' + Math.round(performance.now()) + 'ms';
     const ct = (s) => 'ct=' + (s.t == null ? '?' : s.t.toFixed(2));
@@ -38,16 +45,23 @@
     function tick() {
       const s = yt.captionState();
       if (!s) return; // 播放器未就緒：無可觀測
+      tickN++;
       const cur = yt.currentVideoId();
       if (cur !== vid) {
         vid = cur;
         lastSig = undefined;
         lastPs = undefined;
+        lastAd = undefined;
       }
       if (own && --own.ttl <= 0) own = null;
+      if (s.ad !== lastAd) {
+        if (lastAd !== undefined) anchorTick = tickN; // 廣告邊界；首次觀測非邊界不算
+        lastAd = s.ad;
+      }
       const sig = s.off ? 'off' : [s.lang, s.kind, s.name, s.tlang].join('|');
       if (sig !== lastSig) {
         const first = lastSig === undefined;
+        if (first) anchorTick = tickN; // baseline＝本影片生命週期起點錨
         const isOwn =
           !!own && !s.off && s.kind === 'asr' &&
           (!own.lang || !s.lang || s.lang === own.lang) && s.tlang === own.tlang;
@@ -67,15 +81,27 @@
         if (lastPs !== undefined) {
           log.info('watch', 'v=' + vid, now(), 'playerState', lastPs + '→' + s.playerState, ct(s), ...(s.ad ? ['[ad]'] : []));
         }
+        anchorTick = tickN;
         lastPs = s.playerState;
       }
+    }
+
+    // 距離最近生命週期錨點（baseline／playerState 轉移／廣告邊界）幾個已觀測 tick。
+    // 尚無任何錨點回 Infinity。autodrive 的 done 後對帳靠它判別「播放器重置 vs
+    // 使用者換軌」——重置緊鄰錨點（實測早於 ps 轉移 ~160ms，逐 tick 續判補得到），
+    // 穩態深處的偏離則永遠夠不到窗。
+    function anchorAge() {
+      return anchorTick < 0 ? Infinity : tickN - anchorTick;
     }
 
     function reset() {
       vid = null;
       lastSig = undefined;
       lastPs = undefined;
+      lastAd = undefined;
       own = null;
+      tickN = 0;
+      anchorTick = -1;
     }
 
     // 掛載自報（resolve 時一次）：把「模組有沒有載入」與「播放器可不可觀測」拆成兩個
@@ -83,6 +109,6 @@
     // captionState 一直回 null，而不是模組根本不在頁面裡。
     log.info('watch', 'attached');
 
-    return { tick, markOwn, reset, dispose: reset };
+    return { tick, markOwn, anchorAge, reset, dispose: reset };
   });
 })();

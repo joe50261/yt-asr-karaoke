@@ -190,8 +190,13 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   `[external]`（播放器自己重置或使用者操作）／`[baseline]`（本影片
   首次觀測）；playerState 轉移逐筆記錄（重置的對帳錨點）。YT 會在同
   session 的不明生命週期點重置選軌（偏好 reconcile），這是抓「哪個
-  瞬間、前後發生什麼」的材料。engine 每 tick 呼叫 `tick()`（導航守門
-  之前——導航窗口內的重置也要看得到）、teardown 呼叫 `reset()`。
+  瞬間、前後發生什麼」的材料——實測（2026-07-18 log）重置落在
+  buffering→playing 轉移前 ~160ms。`anchorAge()` 把「距最近生命週期
+  錨點（baseline／playerState 轉移／廣告邊界）幾個 tick」開放給
+  yk-autodrive 的 done 後對帳：貼近錨點的外部偏離是播放器重置（可回
+  選），穩態深處的偏離是使用者動作（尊重）。engine 每 tick 呼叫
+  `tick()`（導航守門之前——導航窗口內的重置也要看得到）、teardown
+  呼叫 `reset()`。
   穩態零輸出。resolve 時自報一行 `watch attached`——「模組有沒有載入」
   與「播放器可不可觀測」拆成兩個可分辨的訊號：attached 有印而
   `[baseline]` 不出，問題在 `captionState` 回 null，不是模組不在頁面裡。
@@ -235,9 +240,17 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   **讓路期**（~2 秒）：bind 當下不搶 setOption，先讓播放器 init 自己
   的偏好還原出手（有 body 落池即提前結束；同影片換目標語言不適用），
   避免在錯誤時機與內建功能 race。兩者共用每輪 one-shot 上限 8 次的
-  預算，防止與使用者對戰或洗版。每個動作（選軌、相位轉移、
-  re-arm、切一遍）都記 log 並帶 `v=<影片id>`，多影片連續導航時可逐行
-  對上。engine 每 tick 呼叫 `drive()`、teardown 時呼叫 `reset()`。
+  預算，防止與使用者對戰或洗版。**done 後對帳（reseed）**：done 不是
+  終點——實測播放器會在 done 後（如 buffering→playing 轉移）自己把
+  選軌重置回「手動軌＋記住的翻譯」，one-shot latch 不動的話 engine
+  只能 stepAside、失敗被 done/bound 的成功 log 蓋住。done 相位因此
+  每 tick 繼續對帳：選擇偏離目標且字幕仍開著時，偏離「開始」貼近
+  生命週期錨點（`watch.anchorAge`；錨可晚到，窗內逐 tick 續判）就把
+  目標重選回來；穩態深處的偏離＝使用者換軌、字幕被關＝使用者意志，
+  一律尊重。上限 3 次／one-shot，照樣過在途守門。每個動作（選軌、
+  相位轉移、re-arm、切一遍、回選）都記 log 並帶 `v=<影片id>`，多影片
+  連續導航時可逐行對上。engine 每 tick 呼叫 `drive()`、teardown 時
+  呼叫 `reset()`。
 - `yk-native.js` —— **原生播放模式**，獨立的可熱抽換模組：純函數
   `cookKaraoke(entries, opts)`（解析後的行 → 卡拉OK `json3`：pop-on 視窗、
   逐字重繪事件、經 `timing.wordState` 的逐 seg pen、整數色值）、註冊到
