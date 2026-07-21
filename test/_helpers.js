@@ -91,6 +91,10 @@ function makeDom() {
       },
       get id() { return this._id; },
       set id(v) { this._id = v; if (v) byId.set(v, node); },
+      // 與真 DOM 對齊：className 與 classList 同一份資料——模組碼用 className 指定、
+      // 用 '.class' 選擇器查（yk-transcript 的 .ykt-body）；兩者不同步的話 class 查詢恆 miss。
+      get className() { return [...this.classList._s].join(' '); },
+      set className(v) { this.classList._s = new Set(String(v).split(/\s+/).filter(Boolean)); },
       // 與真 DOM 對齊：模組碼用 parentElement 做守門（yk-transcript 的 re-home 判斷），
       // 假 DOM 少了它會讓該守門「恆真」，守門被拔掉測試也照綠（無鑑別力）。
       get parentElement() { return this.parent; },

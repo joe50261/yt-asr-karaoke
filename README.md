@@ -216,9 +216,21 @@ YouTube 的**自動翻譯**字幕，包含**雙語對照（dual-track）**顯示
   補丁只安裝一次（`__YK_NET__`）但**不含任何邏輯**：每個決策都經 page-global
   的 `__YK_NETIMPL__` 呼叫、每次 resolve 重指，所以熱抽換這個模組真的會改變
   live hook 跑的邏輯（MCP 注入的 session 能驗證自己的修改）。
+  **XHR 實例重用安全**：監聽器與 getter 影子逐實例只掛一次，且在觸發／讀取
+  當下重讀 `this.__ykUrl` 判定——不把 send 當下的 URL 封進閉包。XHR 實例可
+  合法重用（open→send→load 再一輪），per-send 掛監聽會讓舊 send 的監聽在之
+  後每輪 load 再觸發、把新 body 記到**舊 URL**：譯文落到原文（無 `tlang`）
+  URL、池被跨變體汙染（側欄「原文」變譯文事故的資料層根因）。重用會**靜默**
+  終止上一輪在途請求（`open()` 不發 abort/loadend），該筆在途殘影在下一輪
+  send 補結清，不讓 `anyInFlight` 卡到 TTL。
 - `yk-styles.js` —— 注入覆蓋層＋逐字稿＋設定選單的 CSS。
 - `yk-overlay.js` —— 置中的卡拉OK覆蓋層（管理自己的渲染列）。
-- `yk-transcript.js` —— 側欄逐字稿面板（管理自己的面板狀態）。
+- `yk-transcript.js` —— 側欄逐字稿面板（管理自己的面板狀態）。重建簽名是
+  **內容感知**的（key＋行數＋行文字指紋，指紋按 lines 陣列參照 WeakMap 快取）：
+  key＋行數不足以辨識同一份內容——行級 roll-up 軌的翻譯保留 cue 網格，行數與
+  原文**恆相等**，bind 某槽換了語言時 count-only 簽名看不出差異，面板會永遠卡
+  在舊內容（overlay 每幀直讀 bind 卻是新的，兩表面分家）。同內容的新陣列
+  （廣告後重 parse）指紋相同，不觸發無謂重建。
 - `yk-panel.js` —— **頁內設定選單**（播放器上的 ⚙ 按鈕＋卡片），獨立的可
   熱抽換模組。純 view：讀 `settings.current` 反映控件、只經 `settings.apply()`
   寫入、自動翻譯清單每次開卡從 `yt.translationLanguages()` 現建。
