@@ -26,6 +26,31 @@
     let byVariant = {}; // key -> [{ row, wordEls, line }] per line of that variant
     let active = []; // currently-highlighted row entries (1, or 2 in dual-track)
 
+    // 行陣列 → 內容指紋，重建簽名的一部分。key＋行數不足以辨識「同一份內容」：行級
+    // roll-up 軌的翻譯保留 cue 網格（每 cue 列數相同），行數與原文**恆相等**——bind 某
+    // 槽的 body 換了語言（池一度被錯 body 汙染、之後自我修正）時，count-only 簽名看不出
+    // 差異，面板永遠卡在舊內容，而 overlay 每幀直讀 bind 顯示的卻是新內容（「雙語字幕
+    // 對、側欄原文錯」的整起事故）。指紋按 lines 陣列參照做 WeakMap 快取：sync 每 tick
+    // 重算簽名，內容只在陣列首次出現時掃一遍，之後 O(1)；同內容的新陣列（廣告後重
+    // parse）指紋相同，不會觸發無謂重建。
+    const fingerprints = new WeakMap(); // lines[] -> hash string
+    function linesFingerprint(lines) {
+      let fp = fingerprints.get(lines);
+      if (fp === undefined) {
+        let h = 0;
+        for (const line of lines) {
+          h = (h * 31 + line.start) | 0;
+          for (const w of line.words) {
+            const s = w.text || '';
+            for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+          }
+        }
+        fp = String(h >>> 0);
+        fingerprints.set(lines, fp);
+      }
+      return fp;
+    }
+
     // ms -> clock label (m:ss, or h:mm:ss past the hour). Display-only.
     function fmtTime(ms) {
       const total = Math.max(0, Math.round(ms / 1000));
@@ -251,7 +276,7 @@
       }
       const panel = ensurePanel();
       panel.dataset.open = 'true';
-      const nextSig = entries.map((e) => `${e.key}:${e.lines.length}`).join('|');
+      const nextSig = entries.map((e) => `${e.key}:${e.lines.length}:${linesFingerprint(e.lines)}`).join('|');
       if (nextSig !== sig) {
         sig = nextSig;
         byVariant = buildTranscript(entries);

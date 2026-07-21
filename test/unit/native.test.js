@@ -525,6 +525,54 @@ describe('yk-capture transform seam (real-getter fake XHR)', () => {
     expect(xhr.responseText).toBe('LATE:' + VALID);
   });
 
+  // ---- XHR 實例重用（open→send→load 再 open→send→load）：播放器可以合法重用同一個
+  // XHR 物件。per-send 掛監聽／per-send 封 URL 進閉包的舊做法，會讓舊 send 的監聽在
+  // 之後每一輪 load 再觸發，把新 body 記到舊 URL——譯文落到原文（無 tlang）URL，
+  // 池被跨變體汙染（「側欄原文變譯文」事故的資料層根因）。----
+
+  test('XHR 實例重用：舊 send 的監聽不得把新一輪 body 記到舊 URL（池跨變體汙染）', () => {
+    const { s, CAP } = setup();
+    const EN = '{"events":[{"tStartMs":0,"dDurationMs":100,"segs":[{"utf8":"hello"}]}]}';
+    const ZH = '{"events":[{"tStartMs":0,"dDurationMs":100,"segs":[{"utf8":"你好"}]}]}';
+    const TL_URL = ASR_URL + '&tlang=zh-Hant';
+    const xhr = new s.XMLHttpRequest();
+    xhr.open('GET', ASR_URL);
+    xhr.send();
+    xhr.__fireLoad(EN);
+    xhr.open('GET', TL_URL); // 同一實例重用去抓翻譯變體
+    xhr.send();
+    xhr.__fireLoad(ZH);
+    expect(CAP.get(ASR_URL)).toBe(EN); // 原文槽不得被第二輪的譯文 body 蓋掉
+    expect(CAP.get(TL_URL)).toBe(ZH);
+  });
+
+  test('XHR 實例重用：asr 之後載手動軌，getter 不得拿舊 asr URL 去 cook 手動 body', () => {
+    const { s, capture } = setup();
+    capture.registerTransform((u, o) => 'COOKED:' + o);
+    const xhr = new s.XMLHttpRequest();
+    xhr.open('GET', ASR_URL);
+    xhr.send();
+    xhr.__fireLoad(VALID);
+    expect(xhr.responseText).toBe('COOKED:' + VALID); // asr：照煮
+    xhr.open('GET', 'https://www.youtube.com/api/timedtext?v=abc&lang=en&name=Default');
+    xhr.send();
+    xhr.__fireLoad(VALID);
+    expect(xhr.responseText).toBe(VALID); // 手動軌：原樣放行（舊碼會用第一輪的 asr URL 照煮）
+  });
+
+  test('XHR 實例重用：上一輪未 loadend 的在途殘影在下一輪 send 結清（不卡 autodrive 到 TTL）', () => {
+    const { s, capture } = setup();
+    const xhr = new s.XMLHttpRequest();
+    xhr.open('GET', ASR_URL);
+    xhr.send();
+    expect(capture.anyInFlight()).toBe(true);
+    // 真 XHR：對已 send 的實例重呼叫 open() 靜默終止在途請求（不發 abort/loadend）
+    xhr.open('GET', ASR_URL + '&tlang=zh-Hant');
+    xhr.send();
+    xhr.__fireLoad(VALID);
+    expect(capture.anyInFlight()).toBe(false); // 兩輪都已結清（第一輪由 send 補結）
+  });
+
   test('hot-swap yk-capture：一次性安裝的補丁改讀新 resolve 的邏輯（__YK_NETIMPL__ 重指）', () => {
     const { s, capture, CAP } = setup();
     const storeBefore = s.window.__YK_NETIMPL__.storeOriginal;

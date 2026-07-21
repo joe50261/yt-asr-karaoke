@@ -247,57 +247,87 @@
         this.__ykUrl = url;
         return open.call(this, method, url, ...rest);
       };
+      // 監聽器與 getter 影子都「逐實例掛一次」，且一律在觸發/讀取當下讀 this.__ykUrl 重新
+      // 判定——不得把 send 當下的 URL 封進閉包。XHR 實例可以重用（open→send→load 再
+      // open→send→load）：per-send 掛監聽的話，舊 send 的監聽會在**之後每一輪** load 再
+      // 觸發，把新一輪的 body 記到舊 URL 底下——譯文 body 落到原文（無 tlang）URL，池被
+      // 跨變體汙染，雙軌的「原文」從此顯示譯文（行級 roll-up 軌的譯文保留 cue 網格、行數
+      // 與原文恆相等，錯 body 連行數都對得上，下游全無察覺）。getter 影子同理：舊 asr URL
+      // 封進閉包的話，實例重用去載手動軌時會拿舊 URL 去 cook 手動 body。
       XMLHttpRequest.prototype.send = function (...args) {
         const sendUrl = String(this.__ykUrl);
         if (impl.isTimedtextUrl(sendUrl)) {
           // 在途/abort 觀測涵蓋所有 timedtext（含手動軌）；捕獲與失敗台帳仍 asr-only。
           try {
+            // 重用會**靜默**終止上一輪在途請求（spec：open() 不發 abort/loadend）——上一輪
+            // 的在途殘影沒有事件可結清，只能在下一輪 send 補結，否則 anyInFlight 卡 true
+            // 到 TTL 過期（autodrive 白等 30 秒）。
+            if (this.__ykPending) impl.noteSettled(this.__ykPending);
             impl.noteSent(sendUrl);
           } catch {
             /* ignore */
           }
+          this.__ykPending = sendUrl;
+        } else if (this.__ykPending) {
+          try {
+            impl.noteSettled(this.__ykPending); // timedtext → 非 timedtext 的重用同樣要結清
+          } catch {
+            /* ignore */
+          }
+          this.__ykPending = null;
+        }
+        if (impl.isTimedtextUrl(sendUrl) && !this.__ykHooked) {
+          this.__ykHooked = true;
           this.addEventListener('abort', () => {
             try {
-              impl.noteAborted(sendUrl); // 被取代／取消：只記 log，不入失敗台帳（無伺服器裁決）
+              const url = String(this.__ykUrl);
+              // 被取代／取消：只記 log，不入失敗台帳（無伺服器裁決）
+              if (impl.isTimedtextUrl(url)) impl.noteAborted(url);
             } catch {
               /* ignore */
             }
           });
           // load / error / abort 三種結局都會走 loadend：在途台帳只在這裡結清一次。
+          // 結清的是「這一輪 send 記下的那筆」（__ykPending），不是當下 URL——兩者只在
+          // 監聽器與 send 之間插了一次重開時不同，此時該結清的正是舊筆。
           this.addEventListener('loadend', () => {
             try {
-              impl.noteSettled(sendUrl);
+              if (this.__ykPending) impl.noteSettled(this.__ykPending);
             } catch {
               /* ignore */
             }
+            this.__ykPending = null;
           });
-        }
-        if (impl.isAsrTimedtextUrl(sendUrl)) {
-          const url = sendUrl;
           // Capture the ORIGINAL via the native getter (never this.responseText, which we
           // shadow next — reading it would store the COOKED body and corrupt the pool).
           this.addEventListener('load', () => {
             try {
-              impl.noteResult(url, this.status, impl.storeOriginal(url, impl.nativeText(this)));
+              const url = String(this.__ykUrl);
+              if (impl.isAsrTimedtextUrl(url)) {
+                impl.noteResult(url, this.status, impl.storeOriginal(url, impl.nativeText(this)));
+              }
             } catch {
               /* ignore */
             }
           });
           this.addEventListener('error', () => {
             try {
-              impl.noteResult(url, 0, false); // 網路層死亡（status 0）也入台帳
+              const url = String(this.__ykUrl);
+              if (impl.isAsrTimedtextUrl(url)) impl.noteResult(url, 0, false); // 網路層死亡（status 0）也入台帳
             } catch {
               /* ignore */
             }
           });
           // Shadow responseText/response so the PLAYER receives the cooked body when a
           // transform is registered; otherwise the native body, byte-identical. tx.fn is
-          // read dynamically (so a transform registered after send() still applies).
+          // read dynamically (so a transform registered after send() still applies), and
+          // the URL is re-read per access so a reused instance cooks only asr bodies.
           Object.defineProperty(this, 'responseText', {
             configurable: true,
             get() {
               const orig = impl.nativeText(this);
-              if (this.readyState === 4) {
+              const url = String(this.__ykUrl);
+              if (this.readyState === 4 && impl.isAsrTimedtextUrl(url)) {
                 const cooked = impl.applyTransform(url, orig);
                 if (cooked != null) return cooked;
               }
@@ -307,7 +337,8 @@
           Object.defineProperty(this, 'response', {
             configurable: true,
             get() {
-              if (this.readyState !== 4 || !tx.fn) {
+              const url = String(this.__ykUrl);
+              if (this.readyState !== 4 || !tx.fn || !impl.isAsrTimedtextUrl(url)) {
                 return impl.nativeResponse(this);
               }
               const cooked = impl.applyTransform(url, impl.nativeText(this));
